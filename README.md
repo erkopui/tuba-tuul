@@ -44,7 +44,7 @@ The serial port may also show up as `/dev/ttyUSB0`.
 
 On first boot the board starts the access point `fan-pwm-setup` (password `fancontrol`).
 Connect to it, open http://192.168.4.1/, enter the home WiFi name and password, press Save.
-The board reboots and joins that network. It is then reachable as http://fans.local/
+The board reboots and joins that network. It is then reachable as http://fans2.local/
 (the IP address is also printed on the serial console).
 
 If the home WiFi cannot be reached for 30 s the setup AP comes back until the connection works again.
@@ -53,13 +53,13 @@ Status LED (GPIO 48): short flash every 2 s = connected, slow blink = connecting
 
 ## REST API
 
-    curl http://fans.local/api/fans                 # [0,0,0,0,0,0,0,0]  speed of each fan in %
-    curl -d 75 http://fans.local/api/fans/2         # fan 2 to 75 %
-    curl -d 30 http://fans.local/api/fans/all       # every fan to 30 %
-    curl -d 100 'http://fans.local/api/fans/1?fade=3000'   # with its own ramp time
-    curl -d 0 'http://fans.local/api/fans/all?fade=0'      # at once
-    curl -d $'ssid\npassword' http://fans.local/api/wifi   # change WiFi and reboot
-    curl http://fans.local/api/wifi/scan            # networks in range, strongest first
+    curl http://fans2.local/api/fans                 # [0,0,0,0,0,0,0,0]  speed of each fan in %
+    curl -d 75 http://fans2.local/api/fans/2         # fan 2 to 75 %
+    curl -d 30 http://fans2.local/api/fans/all       # every fan to 30 %
+    curl -d 100 'http://fans2.local/api/fans/1?fade=3000'   # with its own ramp time
+    curl -d 0 'http://fans2.local/api/fans/all?fade=0'      # at once
+    curl -d $'ssid\npassword' http://fans2.local/api/wifi   # change WiFi and reboot
+    curl http://fans2.local/api/wifi/scan            # networks in range, strongest first
 
 A speed change is not applied at once: the fan ramps to the new speed, 10 s for the full 0 to 100 %
 range (`FAN_FADE_MS` in `main/config.h`), smaller changes proportionally less. `?fade=<ms>` overrides
@@ -67,10 +67,16 @@ that time for one request, 0 to 40000. The API always reports the target speed.
 
 The POST requests answer with the new speed list.
 
-http://fans.local/ is a test page: a slider and 0/50/100 buttons per fan, an "All" row, a field for
+http://fans2.local/ is a test page: a slider and 0/50/100 buttons per fan, an "All" row, a field for
 the fade time, and a log line with the last request and the answer of the device.
 
 There is no authentication, keep the device on a trusted network.
+
+## Modbus TCP
+
+Port 502, any unit id. Holding registers 0-7 are the speeds of fans 1-8 in percent
+(functions 3, 6 and 16). A written value above 100 counts as 100. Speed changes use the default
+ramp time. REST and Modbus show the same speeds.
 
 ## Source
 
@@ -80,6 +86,7 @@ There is no authentication, keep the device on a trusted network.
 | `main/main.c`   | start-up, watchdog, main loop          |
 | `main/fan.c`    | PWM outputs                            |
 | `main/http.c`   | REST API                               |
+| `main/modbus.c` | Modbus TCP server (esp-modbus)         |
 | `main/index.html` | test page served at `/`              |
 | `main/wifi.c`   | WiFi station + setup AP, mDNS          |
 | `main/led.c`    | status LED                             |

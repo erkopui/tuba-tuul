@@ -1,7 +1,8 @@
-// 8-channel 25 kHz PWM fan controller with a REST API, for ESP32-S3.
+// 8-channel 25 kHz PWM fan controller with a REST API and Modbus TCP, for ESP32-S3.
 //
 // WiFi and the TCP/IP stack run on core 0, this task and the HTTP server on
-// core 1 (see sdkconfig.defaults). Settings are in config.h, the API in http.c.
+// core 1 (see sdkconfig.defaults). Settings are in config.h, the API in http.c,
+// Modbus in modbus.c.
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -11,6 +12,7 @@
 #include "fan.h"
 #include "http.h"
 #include "led.h"
+#include "modbus.h"
 #include "mtimer.h"
 #include "wifi.h"
 
@@ -43,6 +45,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
 
     wifi_init();
+    modbus_start();
     http_start();
 
     for (;;) {

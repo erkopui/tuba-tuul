@@ -18,6 +18,8 @@
 #define FAN_FADE_MS     10000
 #define FAN_FADE_MAX_MS 40000   // hardware limit at 25 kHz / 10 bits
 
+#define MODBUS_PORT     502     // Modbus TCP: holding registers 0..FAN_COUNT-1 = fan speed in %
+
 #define LED_GPIO        48      // green user LED on the LCKFB ESP32S3R8N8 board
 #define LED_ON          1       // level that lights the LED
 
@@ -27,6 +29,6 @@
 #define WIFI_AP_AFTER_MS    30000   // start the setup AP after this long without a connection
 #define WIFI_AP_RETRY_MS    60000   // reconnect attempt interval while the setup AP is up
 
-#define HOSTNAME        "fans"          // http://fans.local/
+#define HOSTNAME        "fans2"         // http://fans2.local/
 #define AP_SSID         "fan-pwm-setup"
 #define AP_PASS         "fancontrol"    // at least 8 characters
