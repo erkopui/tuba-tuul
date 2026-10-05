@@ -1,0 +1,106 @@
+<!doctype html>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Fans</title>
+<style>
+body { font-family: sans-serif; max-width: 34em; margin: 1em auto; padding: 0 1em }
+.fan { display: flex; align-items: center; gap: .5em; margin: .7em 0 }
+.fan span { width: 3em }
+.fan input { flex: 1; min-width: 5em }
+.fan b { width: 2.2em; text-align: right }
+button { padding: .3em .6em }
+input[type=number] { width: 6em }
+pre { background: #eee; padding: .5em; white-space: pre-wrap; min-height: 1.2em }
+</style>
+
+<h2>Fans</h2>
+<p>Fade <input id=fade type=number min=0 max=40000 step=500 placeholder=default> ms for 0 to 100 %
+<div id=fans></div>
+<button id=refresh>Refresh</button>
+<pre id=log></pre>
+
+<h2>WiFi</h2>
+<p><button id=scan>Scan</button> <select id=nets hidden></select>
+<p><input id=ssid placeholder=SSID> <input id=pass type=password placeholder=Password>
+<button id=save>Save and reboot</button>
+
+<script>
+var rows = []
+
+// Send a request and show it with the answer in the log line.
+function post(path, body) {
+	var line = 'POST ' + path + '  ' + body.split('\n')[0]
+	log.textContent = line
+	return fetch(path, { method: 'POST', body: body }).then(function(res) {
+		return res.text().then(function(text) {
+			log.textContent = line + '\n' + res.status + '  ' + text
+			return res.ok ? text : null
+		})
+	}).catch(function(err) {
+		log.textContent = line + '\n' + err
+	})
+}
+
+function load() {
+	return fetch('/api/fans').then(function(res) { return res.json() }).then(show)
+}
+
+function show(list) {
+	list.forEach(function(pct, i) {
+		var row = rows[i] || (rows[i] = add(i + 1, 'Fan ' + (i + 1)))
+		row.range.value = row.val.textContent = pct
+	})
+}
+
+function set(id, pct) {
+	var query = fade.value === '' ? '' : '?fade=' + fade.value
+	post('/api/fans/' + id + query, '' + pct).then(function(text) {
+		if (text) show(JSON.parse(text))
+		else load()
+	})
+}
+
+function add(id, name) {
+	var el = document.createElement('div')
+	el.className = 'fan'
+	el.innerHTML = '<span>' + name + '</span><input type=range max=100 value=0><b>0</b>%' +
+		'<button>0</button><button>50</button><button>100</button>'
+	var range = el.children[1], val = el.children[2]
+	range.oninput = function() { val.textContent = range.value }
+	range.onchange = function() { set(id, range.value) }
+	el.querySelectorAll('button').forEach(function(btn) {
+		btn.onclick = function() {
+			range.value = val.textContent = btn.textContent
+			set(id, btn.textContent)
+		}
+	})
+	fans.appendChild(el)
+	return { range: range, val: val }
+}
+
+refresh.onclick = load
+scan.onclick = function() {
+	scan.textContent = 'Scanning...'
+	fetch('/api/wifi/scan').then(function(res) {
+		if (!res.ok) throw 'scan failed, try again'
+		return res.json()
+	}).then(function(list) {
+		nets.textContent = ''
+		nets.add(new Option(list.length + ' networks, pick one', ''))
+		list.forEach(function(net) {
+			nets.add(new Option(net.ssid + '  (' + net.rssi + ' dBm)', net.ssid))
+		})
+		nets.hidden = false
+	}).catch(function(err) {
+		log.textContent = 'GET /api/wifi/scan\n' + err
+	}).then(function() {
+		scan.textContent = 'Scan'
+	})
+}
+nets.onchange = function() {
+	if (nets.value) ssid.value = nets.value
+	pass.focus()
+}
+save.onclick = function() { post('/api/wifi', ssid.value + '\n' + pass.value) }
+load().then(function() { add('all', 'All') })
+</script>
