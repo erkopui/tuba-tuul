@@ -26,16 +26,7 @@ Each GPIO is wired straight to the PWM pin of its fan and drives it high (3.3 V)
 - The fan is powered from its own 12 V supply, not from the board.
 
 The fan pulls its PWM pin up internally, so while the ESP32 is unpowered, in reset or being flashed
-the fan runs at full speed. That pull-up goes to 3.3 V or 5 V depending on the fan (the spec allows
-up to 5.25 V) and the ESP32 pins are not 5 V tolerant: while the firmware runs the pin holds the
-line at 3.3 V, but with a 5 V fan and the ESP32 off the pin sees more than it is specified for.
-Measure the open PWM pin of the fan; if it is 5 V, use a transistor per channel.
-
-With an NPN transistor (BC547, 2N3904 or similar) per channel, set `PWM_INVERT 1` in `main/config.h`:
-
-    GPIO ---[ 1k ]--- base
-                      collector --- fan pin 4 (PWM)
-                      emitter ----- GND
+the fan runs at full speed.
 
 All fans are off (0 %) after power-up or reboot until the API sets a speed.
 Note that many PC fans keep spinning at their minimum speed at 0 % duty.
