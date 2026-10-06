@@ -4,8 +4,11 @@
 //   POST /api/fans/2      body "75"             set fan 2 to 75 %
 //   POST /api/fans/all    body "30"             set every fan to 30 %
 //        ...?fade=2000                          ramp time in ms for 0..100 %, default FAN_FADE_MS
-//   POST /api/wifi        body "ssid\npassword" store WiFi credentials and reboot
+//   GET  /api/wifi        -> {"name":"fans2","saved":["home","office"]}   mDNS name and saved networks
+//   POST /api/wifi        body "ssid\npassword" save a WiFi network, or the new password of a saved one
+//   DELETE /api/wifi      body "ssid"           remove a saved network
 //   GET  /api/wifi/scan   -> [{"ssid":"home","rssi":-52}, ...]  networks in range
+//   POST /api/name        body "fans3"          the board is http://fans3.local/ from now on
 //   GET  /api/vpn         -> {"state":"up","tunnel":"10.0.0.2/24 via vpn.example.com:51820"}
 //   POST /api/vpn         body = WireGuard client config   store it, the tunnel switches over
 //   DELETE /api/vpn                             remove the VPN config and the tunnel
@@ -75,13 +78,15 @@ static int read_body(httpd_req_t *req, char *buf, size_t size)
 static bool same_origin(httpd_req_t *req)
 {
     char origin[80], host[64];
+    size_t name_len = strlen(wifi_name());
 
     if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) == ESP_ERR_NOT_FOUND) {
         return true;    // curl and friends
     }
     if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK
             && strncmp(origin, "http://", 7) == 0 && strcmp(origin + 7, host) == 0
-            && (strcmp(host, HOSTNAME ".local") == 0 || strcmp(host, HOSTNAME) == 0
+            && ((strncmp(host, wifi_name(), name_len) == 0
+                 && (host[name_len] == 0 || strcmp(host + name_len, ".local") == 0))
                 || host[strspn(host, "0123456789.:")] == 0)) {
         return true;
     }
@@ -129,6 +134,52 @@ static esp_err_t fans_post(httpd_req_t *req)
     return fans_get(req);
 }
 
+// Writes text as a JSON string with its quotes: quote and backslash escaped,
+// control characters dropped. Returns the end of it.
+static char *json_string(char *p, const char *text)
+{
+    *p++ = '"';
+    for (; *text; text++) {
+        if (*text == '"' || *text == '\\') {
+            *p++ = '\\';
+        }
+        if ((unsigned char)*text >= 0x20) {
+            *p++ = *text;
+        }
+    }
+    *p++ = '"';
+    *p = 0;
+    return p;
+}
+
+// The usual end of a request that changes a setting: the problem with 400,
+// or with 500 when the board failed, else the text for success.
+static esp_err_t answer(httpd_req_t *req, const char *problem, bool board_failed, const char *done_text)
+{
+    if (problem) {
+        return httpd_resp_send_err(req, board_failed ? HTTPD_500_INTERNAL_SERVER_ERROR : HTTPD_400_BAD_REQUEST,
+                                   problem);
+    }
+    return httpd_resp_sendstr(req, done_text);
+}
+
+static esp_err_t wifi_get(httpd_req_t *req)
+{
+    char buf[60 + WIFI_NETS * 70], *p = buf;
+
+    p = json_string(p + sprintf(p, "{\"name\":"), wifi_name());
+    p += sprintf(p, ",\"saved\":[");
+    for (int i = 0; i < WIFI_NETS; i++) {
+        if (wifi_saved(i)[0]) {
+            p = json_string(p, wifi_saved(i));
+            *p++ = ',';
+        }
+    }
+    strcpy(p[-1] == ',' ? p - 1 : p, "]}");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, buf);
+}
+
 static esp_err_t wifi_scan_get(httpd_req_t *req)
 {
     static wifi_network_t networks[15];
@@ -141,17 +192,8 @@ static esp_err_t wifi_scan_get(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr_chunk(req, "[");
     for (int i = 0; i < count; i++) {
-        char *p = buf + sprintf(buf, "%s{\"ssid\":\"", i ? "," : "");
-        // JSON string: escape quote and backslash, drop control characters.
-        for (const char *s = networks[i].ssid; *s; s++) {
-            if (*s == '"' || *s == '\\') {
-                *p++ = '\\';
-            }
-            if ((unsigned char)*s >= 0x20) {
-                *p++ = *s;
-            }
-        }
-        sprintf(p, "\",\"rssi\":%d}", networks[i].rssi);
+        char *p = json_string(buf + sprintf(buf, "%s{\"ssid\":", i ? "," : ""), networks[i].ssid);
+        sprintf(p, ",\"rssi\":%d}", networks[i].rssi);
         httpd_resp_sendstr_chunk(req, buf);
     }
     httpd_resp_sendstr_chunk(req, "]");
@@ -192,15 +234,43 @@ static esp_err_t wifi_post(httpd_req_t *req)
         pass += *pass == '\n';
         pass[strcspn(pass, "\r\n")] = 0;
     }
-    esp_err_t err = wifi_set_credentials(body, pass);
-    if (err == ESP_ERR_INVALID_ARG) {
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid must be 1..32 and password 0..64 bytes");
-    }
-    if (err != ESP_OK) {
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
-    }
+    const char *problem = wifi_add(body, pass);
+    return answer(req, problem, problem == wifi_failed, "saved\n");
+}
 
-    return reply_and_reboot(req, "saved, rebooting\n");
+// Body of one line for wifi_delete() and name_post(): a saved network or the new name.
+static const char *read_line(httpd_req_t *req, char *line, size_t size)
+{
+    if (!same_origin(req)) {
+        return NULL;
+    }
+    if (read_body(req, line, size) < 0) {
+        line[0] = 0;        // too long: refused as a name that does not exist or is not valid
+    }
+    line[strcspn(line, "\r\n")] = 0;
+    return line;
+}
+
+static esp_err_t wifi_delete(httpd_req_t *req)
+{
+    char ssid[40];
+
+    if (!read_line(req, ssid, sizeof(ssid))) {
+        return ESP_OK;
+    }
+    const char *problem = wifi_remove(ssid);
+    return answer(req, problem, problem == wifi_failed, "removed\n");
+}
+
+static esp_err_t name_post(httpd_req_t *req)
+{
+    char name[40];
+
+    if (!read_line(req, name, sizeof(name))) {
+        return ESP_OK;
+    }
+    const char *problem = wifi_name_set(name);
+    return answer(req, problem, problem == wifi_failed, "saved\n");
 }
 
 static esp_err_t vpn_get(httpd_req_t *req)
@@ -227,11 +297,7 @@ static esp_err_t vpn_post(httpd_req_t *req)
     mbedtls_platform_zeroize(conf_text, VPN_CONF_MAX);  // it holds the private key
     free(conf_text);
 
-    if (problem) {
-        return httpd_resp_send_err(req, problem == vpn_store_failed ? HTTPD_500_INTERNAL_SERVER_ERROR
-                                                                    : HTTPD_400_BAD_REQUEST, problem);
-    }
-    return httpd_resp_sendstr(req, "saved\n");
+    return answer(req, problem, problem == vpn_store_failed, "saved\n");
 }
 
 static esp_err_t vpn_delete(httpd_req_t *req)
@@ -239,11 +305,7 @@ static esp_err_t vpn_delete(httpd_req_t *req)
     if (!same_origin(req)) {
         return ESP_OK;
     }
-    const char *problem = vpn_config_save(NULL);
-    if (problem) {
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, problem);
-    }
-    return httpd_resp_sendstr(req, "removed\n");
+    return answer(req, vpn_config_save(NULL), true, "removed\n");
 }
 
 static esp_err_t ota_get(httpd_req_t *req)
@@ -314,7 +376,10 @@ void http_start(void)
         { .uri = "/",            .method = HTTP_GET,  .handler = index_get },
         { .uri = "/api/fans",    .method = HTTP_GET,  .handler = fans_get },
         { .uri = "/api/fans/*",  .method = HTTP_POST, .handler = fans_post },
+        { .uri = "/api/wifi",    .method = HTTP_GET,  .handler = wifi_get },
         { .uri = "/api/wifi",    .method = HTTP_POST, .handler = wifi_post },
+        { .uri = "/api/wifi",    .method = HTTP_DELETE, .handler = wifi_delete },
+        { .uri = "/api/name",    .method = HTTP_POST, .handler = name_post },
         { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get },
         { .uri = "/api/vpn",     .method = HTTP_GET,  .handler = vpn_get },
         { .uri = "/api/vpn",     .method = HTTP_POST, .handler = vpn_post },

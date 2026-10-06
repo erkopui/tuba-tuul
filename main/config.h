@@ -29,6 +29,7 @@
 
 #define WDT_TIMEOUT_MS  30000   // reboot if the main loop or a CPU core hangs this long
 
+#define WIFI_NETS           5       // saved networks, 8 at most
 #define WIFI_RETRY_MS       10000   // reconnect attempt interval
 #define WIFI_AP_AFTER_MS    30000   // start the setup AP after this long without a connection
 #define WIFI_AP_RETRY_MS    60000   // reconnect attempt interval while the setup AP is up
@@ -45,6 +46,6 @@
 #define BOARD_TYPE      "fans8"     // 15 characters at most
 #define OTA_CONFIRM_MIN 5           // minutes a new firmware has to be confirmed, else the old one comes back
 
-#define HOSTNAME        "fans2"         // http://fans2.local/
+#define HOSTNAME        "fans2"         // http://fans2.local/, until another name is set over the API
 #define AP_SSID         "fan-pwm-setup"
 #define AP_PASS         "fancontrol"    // at least 8 characters

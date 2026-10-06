@@ -19,6 +19,12 @@ CONFIG_ESP_TASK_WDT_INIT=n
 # Optimize for size (-Os)
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 
+# Sockets: the web server takes up to 10 (7 clients and 3 of its own) and
+# Modbus up to 6 (5 clients and the listening one). With the default of 10
+# for everything, a browser that kept its 6 connections open locked out
+# every other client, Modbus included.
+CONFIG_LWIP_MAX_SOCKETS=20
+
 # Modbus TCP only, the serial modes are not used
 CONFIG_FMB_COMM_MODE_RTU_EN=n
 CONFIG_FMB_COMM_MODE_ASCII_EN=n

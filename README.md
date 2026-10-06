@@ -47,11 +47,20 @@ The serial port may also show up as `/dev/ttyUSB0`.
 ## WiFi setup
 
 On first boot the board starts the access point `fan-pwm-setup` (password `fancontrol`).
-Connect to it, open http://192.168.4.1/, enter the home WiFi name and password, press Save.
-The board reboots and joins that network. It is then reachable as http://fans2.local/
+Connect to it, open http://192.168.4.1/, enter the home WiFi name and password, press Add.
+The board joins that network. It is then reachable as http://fans2.local/
 (the IP address is also printed on the serial console).
 
-If the home WiFi cannot be reached for 30 s the setup AP comes back until the connection works again.
+Up to 5 networks can be saved (`WIFI_NETS` in `main/config.h`). Without a connection the board
+looks which of them are in range and joins the strongest. One that does not let it in is left out
+the next time, so a wrong password does not keep the others from being tried. Adding a network
+does not disturb a working connection. A removed network that is in use stays connected until
+that link drops. The test page lists the saved networks by name; the passwords are never given back.
+
+If no saved network can be reached for 30 s the setup AP comes back until a connection works again.
+
+The name `fans2` can be changed on the test page, or with `/api/name`. The board answers to the
+new name at once and keeps it over reboots. Give each board on a network its own name.
 
 Status LED (GPIO 48): short flash every 2 s = connected, slow blink = connecting, fast blink = setup AP is up.
 
@@ -62,8 +71,11 @@ Status LED (GPIO 48): short flash every 2 s = connected, slow blink = connecting
     curl -d 30 http://fans2.local/api/fans/all       # every fan to 30 %
     curl -d 100 'http://fans2.local/api/fans/1?fade=3000'   # with its own ramp time
     curl -d 0 'http://fans2.local/api/fans/all?fade=0'      # at once
-    curl -d $'ssid\npassword' http://fans2.local/api/wifi   # change WiFi and reboot
+    curl -d $'ssid\npassword' http://fans2.local/api/wifi   # save a WiFi network
+    curl -X DELETE -d ssid http://fans2.local/api/wifi      # remove a saved one
+    curl http://fans2.local/api/wifi                 # {"name":"fans2","saved":["home","office"]}
     curl http://fans2.local/api/wifi/scan            # networks in range, strongest first
+    curl -d fans3 http://fans2.local/api/name        # the board is http://fans3.local/ from now on
 
 The VPN requests are under [VPN](#vpn-wireguard), the update under
 [Firmware update](#firmware-update).
@@ -143,7 +155,7 @@ and `DNS` too.
 ## Firmware update
 
 A new firmware can be sent over WiFi, or through the VPN. On the test page pick
-`build/fan-pwm.bin` under "Firmware" and press Update, or send the file:
+`build/fan-pwm.bin` under "Board" and press Update, or send the file:
 
     curl --data-binary @build/fan-pwm.bin http://fans2.local/api/ota   # write it and reboot into it
     curl http://fans2.local/api/ota      # {"version":"68db7ba","board":"fans8","slot":"ota_0"}

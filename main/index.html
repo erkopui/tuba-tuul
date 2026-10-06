@@ -2,6 +2,7 @@
 <meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>Fans</title>
+<link rel=icon href=data:,>
 <style>
 body { font-family: sans-serif; max-width: 34em; margin: 1em auto; padding: 0 1em }
 .fan { display: flex; align-items: center; gap: .5em; margin: .7em 0 }
@@ -21,9 +22,10 @@ pre { background: #eee; padding: .5em; white-space: pre-wrap; min-height: 1.2em 
 <pre id=log></pre>
 
 <h2>WiFi</h2>
+<div id=saved></div>
 <p><button id=scan>Scan</button> <select id=nets hidden></select>
 <p><input id=ssid placeholder=SSID> <input id=pass type=password placeholder=Password>
-<button id=save>Save and reboot</button>
+<button id=save>Add</button>
 
 <h2>VPN</h2>
 <p>WireGuard: <b id=vpn></b>
@@ -36,8 +38,9 @@ PublicKey = ...
 Endpoint = vpn.example.com:51820"></textarea>
 <p><button id=vpnsave>Save</button> <button id=vpnoff>Remove</button>
 
-<h2>Firmware</h2>
-<p>Running: <b id=fw></b>
+<h2>Board</h2>
+<p>Name <input id=host size=12>.local <button id=hostsave>Save</button>
+<p>Firmware: <b id=fw></b>
 <p><input id=fwfile type=file accept=.bin> <button id=fwsend>Update</button>
 
 <script>
@@ -60,7 +63,7 @@ function post(path, body, method, shown) {
 }
 
 function loadVpn() {
-	fetch('/api/vpn').then(function(res) { return res.json() }).then(function(status) {
+	return fetch('/api/vpn').then(function(res) { return res.json() }).then(function(status) {
 		vpn.textContent = status.state + '  ' + status.tunnel
 	}).catch(function() {
 		vpn.textContent = '?'
@@ -74,10 +77,27 @@ function loadFw() {
 	})
 }
 
+// The board's name and its saved networks, each with a button to remove it.
+function loadWifi() {
+	return fetch('/api/wifi').then(function(res) { return res.json() }).then(function(info) {
+		host.value = info.name
+		saved.textContent = ''
+		info.saved.forEach(function(ssid) {
+			var row = document.createElement('p'), btn = document.createElement('button')
+			row.textContent = ssid + ' '
+			btn.textContent = 'Remove'
+			btn.onclick = function() { post('/api/wifi', ssid, 'DELETE').then(loadWifi) }
+			row.appendChild(btn)
+			saved.appendChild(row)
+		})
+	}).catch(function() {})
+}
+
+// One request after the other, so the browser needs a single connection to
+// the board. The empty icon above saves it the request for one.
 function load() {
-	loadVpn()
-	loadFw().catch(function() { fw.textContent = '?' })
 	return fetch('/api/fans').then(function(res) { return res.json() }).then(show)
+		.then(loadVpn).then(loadWifi).then(loadFw).catch(function() { fw.textContent = '?' })
 }
 
 function show(list) {
@@ -136,7 +156,13 @@ nets.onchange = function() {
 	if (nets.value) ssid.value = nets.value
 	pass.focus()
 }
-save.onclick = function() { post('/api/wifi', ssid.value + '\n' + pass.value) }
+save.onclick = function() { post('/api/wifi', ssid.value + '\n' + pass.value).then(loadWifi) }
+hostsave.onclick = function() {
+	post('/api/name', host.value).then(function(text) {
+		// The old name is gone, a page opened by it moves to the new one.
+		if (text && location.hostname.slice(-6) == '.local') location.hostname = host.value + '.local'
+	})
+}
 // The tunnel switches over a moment after the answer, so look twice.
 function vpnChanged() {
 	setTimeout(loadVpn, 3000)
