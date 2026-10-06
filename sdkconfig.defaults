@@ -16,3 +16,13 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # Modbus TCP only, the serial modes are not used
 CONFIG_FMB_COMM_MODE_RTU_EN=n
 CONFIG_FMB_COMM_MODE_ASCII_EN=n
+
+# WireGuard adds an lwIP interface of its own and keeps its data in the
+# interface's state pointer. esp_netif expects its own data there and crashes
+# as soon as that interface gets its address. With bridge support enabled
+# esp_netif keeps its pointer elsewhere. No bridge is used; this is the cheap
+# option with that effect (0.4 KB, PPP support would be 22 KB).
+CONFIG_ESP_NETIF_BRIDGE_EN=y
+# Taking the tunnel away while connections are open through it needs about
+# 2.1 KB of the TCP/IP task's stack, the default 3072 leaves too little spare.
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=4096

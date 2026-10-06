@@ -1,6 +1,10 @@
 // All the knobs in one place.
 #pragma once
 
+// STR(FAN_COUNT) is "8", for putting a setting into a text
+#define STR_(x) #x
+#define STR(x) STR_(x)
+
 #define FAN_COUNT       8       // LEDC has 8 channels, that is the maximum here
 #define FAN_GPIOS       { 7, 8, 9, 10, 11, 12, 13, 14 }    // away from the antenna end of the board
 
@@ -28,6 +32,13 @@
 #define WIFI_RETRY_MS       10000   // reconnect attempt interval
 #define WIFI_AP_AFTER_MS    30000   // start the setup AP after this long without a connection
 #define WIFI_AP_RETRY_MS    60000   // reconnect attempt interval while the setup AP is up
+
+// WireGuard VPN, the tunnel itself is set up over the API (see vpn.c)
+#define NTP_SERVER      "pool.ntp.org"  // the VPN needs the real time
+#define VPN_KEEPALIVE_S 25      // for a config without PersistentKeepalive, 0 = off
+#define VPN_KEEPALIVE_MAX_S 120 // largest PersistentKeepalive the WireGuard library works with
+#define VPN_RETRY_MS    30000   // wait this long after a failed start
+#define VPN_RESOLVE_MS  120000  // tunnel down this long: look the peer's name up again
 
 #define HOSTNAME        "fans2"         // http://fans2.local/
 #define AP_SSID         "fan-pwm-setup"

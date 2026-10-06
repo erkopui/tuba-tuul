@@ -2,3 +2,4 @@ dependencies:
   idf: ">=5.4"    # fan.c relies on LEDC leaving the pin's open-drain setting alone
   espressif/mdns: "^1.4"
   espressif/esp-modbus: "^2.1"
+  trombik/esp_wireguard: "0.9.0"   # exact: vpn.c uses its private headers

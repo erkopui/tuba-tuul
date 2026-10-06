@@ -6,7 +6,10 @@
 //        ...?fade=2000                          ramp time in ms for 0..100 %, default FAN_FADE_MS
 //   POST /api/wifi        body "ssid\npassword" store WiFi credentials and reboot
 //   GET  /api/wifi/scan   -> [{"ssid":"home","rssi":-52}, ...]  networks in range
-//   GET  /                                      test page (index.html) with sliders and WiFi setup
+//   GET  /api/vpn         -> {"state":"up","tunnel":"10.0.0.2/24 via vpn.example.com:51820"}
+//   POST /api/vpn         body = WireGuard client config   store it, the tunnel switches over
+//   DELETE /api/vpn                             remove the VPN config and the tunnel
+//   GET  /                                      test page (index.html) with sliders, WiFi and VPN setup
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,13 +18,12 @@
 #include "freertos/task.h"
 #include "esp_http_server.h"
 #include "esp_system.h"
+#include "mbedtls/platform_util.h"
 #include "config.h"
 #include "fan.h"
 #include "http.h"
+#include "vpn.h"
 #include "wifi.h"
-
-#define STR_(x) #x
-#define STR(x) STR_(x)
 
 // main/index.html, embedded by CMakeLists.txt
 extern const char index_html_start[] asm("_binary_index_html_start");
@@ -183,22 +185,69 @@ static esp_err_t wifi_post(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t vpn_get(httpd_req_t *req)
+{
+    char buf[256];
+
+    // Neither text has characters that JSON needs escaped.
+    snprintf(buf, sizeof(buf), "{\"state\":\"%s\",\"tunnel\":\"%s\"}", vpn_state(), vpn_tunnel());
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, buf);
+}
+
+static esp_err_t vpn_post(httpd_req_t *req)
+{
+    if (!same_origin(req)) {
+        return ESP_OK;
+    }
+    char *conf_text = malloc(VPN_CONF_MAX);
+    if (!conf_text) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+    }
+    const char *problem = read_body(req, conf_text, VPN_CONF_MAX) > 0 ? vpn_config_save(conf_text)
+                        : "body must be a WireGuard config shorter than " STR(VPN_CONF_MAX) " bytes";
+    mbedtls_platform_zeroize(conf_text, VPN_CONF_MAX);  // it holds the private key
+    free(conf_text);
+
+    if (problem) {
+        return httpd_resp_send_err(req, problem == vpn_store_failed ? HTTPD_500_INTERNAL_SERVER_ERROR
+                                                                    : HTTPD_400_BAD_REQUEST, problem);
+    }
+    return httpd_resp_sendstr(req, "saved\n");
+}
+
+static esp_err_t vpn_delete(httpd_req_t *req)
+{
+    if (!same_origin(req)) {
+        return ESP_OK;
+    }
+    const char *problem = vpn_config_save(NULL);
+    if (problem) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, problem);
+    }
+    return httpd_resp_sendstr(req, "removed\n");
+}
+
 void http_start(void)
 {
-    httpd_handle_t server;
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.core_id = 1;
-    config.lru_purge_enable = true;     // drop the oldest idle connection when all slots are taken
-    config.uri_match_fn = httpd_uri_match_wildcard;
-    ESP_ERROR_CHECK(httpd_start(&server, &config));
-
     static const httpd_uri_t routes[] = {
         { .uri = "/",            .method = HTTP_GET,  .handler = index_get },
         { .uri = "/api/fans",    .method = HTTP_GET,  .handler = fans_get },
         { .uri = "/api/fans/*",  .method = HTTP_POST, .handler = fans_post },
         { .uri = "/api/wifi",    .method = HTTP_POST, .handler = wifi_post },
         { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get },
+        { .uri = "/api/vpn",     .method = HTTP_GET,  .handler = vpn_get },
+        { .uri = "/api/vpn",     .method = HTTP_POST, .handler = vpn_post },
+        { .uri = "/api/vpn",     .method = HTTP_DELETE, .handler = vpn_delete },
     };
+    httpd_handle_t server;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.core_id = 1;
+    config.lru_purge_enable = true;     // drop the oldest idle connection when all slots are taken
+    config.uri_match_fn = httpd_uri_match_wildcard;
+    config.max_uri_handlers = sizeof(routes) / sizeof(routes[0]);
+    ESP_ERROR_CHECK(httpd_start(&server, &config));
+
     for (int i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(server, &routes[i]);
     }

@@ -10,6 +10,7 @@ body { font-family: sans-serif; max-width: 34em; margin: 1em auto; padding: 0 1e
 .fan b { width: 2.2em; text-align: right }
 button { padding: .3em .6em }
 input[type=number] { width: 6em }
+textarea { width: 100%; box-sizing: border-box; font-family: monospace }
 pre { background: #eee; padding: .5em; white-space: pre-wrap; min-height: 1.2em }
 </style>
 
@@ -24,14 +25,27 @@ pre { background: #eee; padding: .5em; white-space: pre-wrap; min-height: 1.2em 
 <p><input id=ssid placeholder=SSID> <input id=pass type=password placeholder=Password>
 <button id=save>Save and reboot</button>
 
+<h2>VPN</h2>
+<p>WireGuard: <b id=vpn></b>
+<p><textarea id=conf rows=8 autocomplete=off spellcheck=false placeholder="[Interface]
+PrivateKey = ...
+Address = 10.0.0.2/24
+
+[Peer]
+PublicKey = ...
+Endpoint = vpn.example.com:51820"></textarea>
+<p><button id=vpnsave>Save</button> <button id=vpnoff>Remove</button>
+
 <script>
 var rows = []
 
-// Send a request and show it with the answer in the log line.
-function post(path, body) {
-	var line = 'POST ' + path + '  ' + body.split('\n')[0]
+// Send a request and show it with the answer in the log line. Of the body
+// only the first line is shown, or the text given in its place.
+function post(path, body, method, shown) {
+	method = method || 'POST'
+	var line = method + ' ' + path + '  ' + (shown || body.split('\n')[0])
 	log.textContent = line
-	return fetch(path, { method: 'POST', body: body }).then(function(res) {
+	return fetch(path, { method: method, body: body }).then(function(res) {
 		return res.text().then(function(text) {
 			log.textContent = line + '\n' + res.status + '  ' + text
 			return res.ok ? text : null
@@ -41,7 +55,16 @@ function post(path, body) {
 	})
 }
 
+function loadVpn() {
+	fetch('/api/vpn').then(function(res) { return res.json() }).then(function(status) {
+		vpn.textContent = status.state + '  ' + status.tunnel
+	}).catch(function() {
+		vpn.textContent = '?'
+	})
+}
+
 function load() {
+	loadVpn()
 	return fetch('/api/fans').then(function(res) { return res.json() }).then(show)
 }
 
@@ -102,5 +125,17 @@ nets.onchange = function() {
 	pass.focus()
 }
 save.onclick = function() { post('/api/wifi', ssid.value + '\n' + pass.value) }
+// The tunnel switches over a moment after the answer, so look twice.
+function vpnChanged() {
+	setTimeout(loadVpn, 3000)
+	setTimeout(loadVpn, 10000)
+}
+vpnsave.onclick = function() {
+	post('/api/vpn', conf.value, 'POST', '(config)').then(function(text) {
+		if (text) conf.value = ''
+		vpnChanged()
+	})
+}
+vpnoff.onclick = function() { post('/api/vpn', '', 'DELETE').then(vpnChanged) }
 load().then(function() { add('all', 'All') })
 </script>
