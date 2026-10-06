@@ -26,7 +26,8 @@ static struct {
 } nets[WIFI_NETS];
 static char name[33] = HOSTNAME;
 static volatile bool connected;
-static volatile bool retry_now;     // a network was added, do not wait for the retry timer
+static volatile bool added;         // a network was added, do not wait for the retry timer
+static uint8_t tried;               // bit per saved network that did not connect since the last connection
 static bool ap_on;
 static mtimer_t retry_timer, ap_timer;
 
@@ -63,39 +64,55 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     if (base == IP_EVENT) {
         ESP_LOGI(TAG, "connected, http://" IPSTR "/", IP2STR(&((ip_event_got_ip_t *)data)->ip_info.ip));
         connected = true;
+        tried = 0;
     } else {
         connected = false;      // wifi_poll() looks for a network again
     }
 }
 
-// Joins the strongest saved network in range. One that did not connect is
-// left out the next time, until all in range had their turn.
+// Joins the strongest saved network in range, at its strongest access point.
+// One that did not connect is left out the next time, until all in range had
+// their turn. Each saved network is asked for by name, which also finds a
+// hidden one; that takes about 1 s for each.
 static void connect_best(void)
 {
-    static wifi_ap_record_t records[20];
-    static uint8_t tried;       // bit per saved network
-    uint16_t count = sizeof(records) / sizeof(records[0]);
+    static wifi_ap_record_t seen[WIFI_NETS];    // primary (the channel) is 0 for one not in range
+    int best = -1;
 
-    // The scan lists the strongest first. It fails while a connect attempt is in progress.
-    if (esp_wifi_scan_start(NULL, true) != ESP_OK || esp_wifi_scan_get_ap_records(&count, records) != ESP_OK) {
-        return;
+    // Ends an attempt in progress, and a link that got no address.
+    esp_wifi_disconnect();
+    for (int i = 0; i < WIFI_NETS; i++) {
+        // Half the usual time on each channel, an access point answers to its name much faster.
+        wifi_scan_config_t scan = { .ssid = (uint8_t *)nets[i].ssid, .show_hidden = true,
+                                    .scan_time = { .active.max = 60, .passive = 120 } };
+        uint16_t count = 1;     // the strongest one
+
+        if (!nets[i].ssid[0] || esp_wifi_scan_start(&scan, true) != ESP_OK
+                || esp_wifi_scan_get_ap_records(&count, &seen[i]) != ESP_OK || count == 0) {
+            seen[i].primary = 0;
+        }
     }
-    for (int round = 0; round < 2; round++) {
-        for (int i = 0; i < count; i++) {
-            for (int j = 0; j < WIFI_NETS; j++) {
-                if (nets[j].ssid[0] && !(tried & 1 << j) && strcmp((char *)records[i].ssid, nets[j].ssid) == 0) {
-                    // The fields are fixed size and need no terminating NUL when full.
-                    wifi_config_t cfg = { .sta.channel = records[i].primary };
-                    strncpy((char *)cfg.sta.ssid, nets[j].ssid, sizeof(cfg.sta.ssid));
-                    strncpy((char *)cfg.sta.password, nets[j].pass, sizeof(cfg.sta.password));
-                    tried |= 1 << j;
-                    esp_wifi_set_config(WIFI_IF_STA, &cfg);
-                    esp_wifi_connect();
-                    return;
-                }
+    for (int round = 0; round < 2 && best < 0; round++) {
+        for (int i = 0; i < WIFI_NETS; i++) {
+            if (seen[i].primary && !(tried & 1 << i) && (best < 0 || seen[i].rssi > seen[best].rssi)) {
+                best = i;
             }
         }
-        tried = 0;      // all in range had their turn, start over with the strongest
+        if (best < 0) {
+            tried = 0;      // all in range had their turn, start over with the strongest
+        }
+    }
+    if (best < 0) {
+        return;
+    }
+    // The fields are fixed size and need no terminating NUL when full.
+    wifi_config_t cfg = { .sta.channel = seen[best].primary, .sta.bssid_set = true };
+    strncpy((char *)cfg.sta.ssid, nets[best].ssid, sizeof(cfg.sta.ssid));
+    strncpy((char *)cfg.sta.password, nets[best].pass, sizeof(cfg.sta.password));
+    memcpy(cfg.sta.bssid, seen[best].bssid, sizeof(cfg.sta.bssid));
+    tried |= 1 << best;
+    if (esp_wifi_set_config(WIFI_IF_STA, &cfg) == ESP_OK) {
+        esp_wifi_connect();
     }
 }
 
@@ -122,7 +139,7 @@ static void ap_start(void)
 void wifi_init(void)
 {
     nvs_handle_t nvs;
-    bool have_nets = false;
+    bool first_time = true;     // no list stored yet
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -131,7 +148,7 @@ void wifi_init(void)
     ESP_ERROR_CHECK(err);
     if (nvs_open("wifi", NVS_READONLY, &nvs) == ESP_OK) {
         size_t size = sizeof(nets);
-        have_nets = nvs_get_blob(nvs, "nets", nets, &size) == ESP_OK;
+        first_time = nvs_get_blob(nvs, "nets", nets, &size) == ESP_ERR_NVS_NOT_FOUND;
         size = sizeof(name);
         nvs_get_str(nvs, "name", name, &size);
         nvs_close(nvs);
@@ -146,7 +163,7 @@ void wifi_init(void)
     esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, on_event, NULL);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_event, NULL);
 
-    if (!have_nets) {
+    if (first_time) {
         // A board from before the list: its one network is in the WiFi driver's storage.
         wifi_config_t sta;
         ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_STA, &sta));
@@ -154,6 +171,8 @@ void wifi_init(void)
         memcpy(nets[0].pass, sta.sta.password, sizeof(sta.sta.password));
         save();
     }
+    // The list is the storage now, the driver need not write each network it tries to the flash.
+    esp_wifi_set_storage(WIFI_STORAGE_RAM);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     if (!saved()) {
@@ -180,23 +199,24 @@ void wifi_poll(void)
         }
         return;
     }
-    if (!retry_now && !mtimer_timeout(&retry_timer)) {
+    if (added) {
+        // Try it soon, but let the answer to that request get out first:
+        // looking for a network takes the radio away from the setup AP.
+        added = false;
+        mtimer_timeout_set(&retry_timer, WIFI_ADDED_MS);
+    }
+    if (!mtimer_timeout(&retry_timer)) {
         return;
     }
-    retry_now = false;
-    mtimer_timeout_set(&retry_timer, WIFI_RETRY_MS);
-
     if (!ap_on && (!saved() || mtimer_timeout(&ap_timer))) {
         ap_start();
     }
     if (saved()) {
-        // Looking for a network scans all channels and stalls the setup AP,
-        // so try less often while it is up.
-        if (ap_on) {
-            mtimer_timeout_set(&retry_timer, WIFI_AP_RETRY_MS);
-        }
         connect_best();
     }
+    // Counted from here, the attempt needs the whole time to get its address.
+    // Looking for the networks stalls the setup AP, so less often while it is up.
+    mtimer_timeout_set(&retry_timer, ap_on ? WIFI_AP_RETRY_MS : WIFI_RETRY_MS);
 }
 
 wifi_state_t wifi_state(void)
@@ -231,16 +251,16 @@ int wifi_scan(wifi_network_t *networks, int max_count)
     return count;
 }
 
-const char *wifi_saved(int idx)
+const char *wifi_saved(int net_idx)
 {
-    return nets[idx].ssid;
+    return nets[net_idx].ssid;
 }
 
-const char *wifi_add(const char *ssid, const char *pass)
+const char *wifi_add(const char *ssid, const char *password)
 {
     int place = -1;
 
-    if (!ssid[0] || strlen(ssid) >= sizeof(nets[0].ssid) || strlen(pass) >= sizeof(nets[0].pass)) {
+    if (!ssid[0] || strlen(ssid) >= sizeof(nets[0].ssid) || strlen(password) >= sizeof(nets[0].pass)) {
         return "ssid must be 1..32 and password 0..64 bytes";
     }
     // The place of the same name, else the first free one.
@@ -252,9 +272,10 @@ const char *wifi_add(const char *ssid, const char *pass)
     if (place < 0) {
         return STR(WIFI_NETS) " networks are saved, remove one first";
     }
-    strcpy(nets[place].pass, pass);
+    strcpy(nets[place].pass, password);
     strcpy(nets[place].ssid, ssid);
-    retry_now = true;
+    tried = 0;
+    added = true;
     return save() == ESP_OK ? NULL : wifi_failed;
 }
 
@@ -263,6 +284,7 @@ const char *wifi_remove(const char *ssid)
     for (int i = 0; i < WIFI_NETS; i++) {
         if (ssid[0] && strcmp(nets[i].ssid, ssid) == 0) {
             memset(&nets[i], 0, sizeof(nets[i]));
+            tried = 0;
             return save() == ESP_OK ? NULL : wifi_failed;
         }
     }
@@ -283,5 +305,6 @@ const char *wifi_name_set(const char *new_name)
     }
     strcpy(name, new_name);
     mdns_hostname_set(name);
+    esp_netif_set_hostname(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"), name);  // for the next DHCP request
     return save() == ESP_OK ? NULL : wifi_failed;
 }

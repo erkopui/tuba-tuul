@@ -29,7 +29,8 @@
 
 #define WDT_TIMEOUT_MS  30000   // reboot if the main loop or a CPU core hangs this long
 
-#define WIFI_NETS           5       // saved networks, 8 at most
+#define WIFI_NETS           5       // saved networks, 8 at most; a smaller number forgets the saved ones
+#define WIFI_ADDED_MS       1500    // a network added without a connection is tried this much later
 #define WIFI_RETRY_MS       10000   // reconnect attempt interval
 #define WIFI_AP_AFTER_MS    30000   // start the setup AP after this long without a connection
 #define WIFI_AP_RETRY_MS    60000   // reconnect attempt interval while the setup AP is up

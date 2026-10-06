@@ -52,8 +52,9 @@ The board joins that network. It is then reachable as http://fans2.local/
 (the IP address is also printed on the serial console).
 
 Up to 5 networks can be saved (`WIFI_NETS` in `main/config.h`). Without a connection the board
-looks which of them are in range and joins the strongest. One that does not let it in is left out
-the next time, so a wrong password does not keep the others from being tried. Adding a network
+looks which of them are in range and joins the strongest, about 1 s of looking for each saved
+one. One that does not let it in is left out the next time, so a wrong password does not keep the
+others from being tried. Hidden networks work too. Adding a network
 does not disturb a working connection. A removed network that is in use stays connected until
 that link drops. The test page lists the saved networks by name; the passwords are never given back.
 

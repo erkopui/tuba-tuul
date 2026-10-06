@@ -18,14 +18,15 @@ typedef struct {
 // ones, strongest first, and returns how many, or -1 if the scan failed.
 int wifi_scan(wifi_network_t *networks, int max_count);
 
-// Saved networks: wifi_saved() gives the name in place idx (0..WIFI_NETS-1),
-// "" for a free place. wifi_add() saves a network, or the new password of a
-// saved one; without a connection the board tries it at once. A removed
+// Saved networks: wifi_saved() gives the name in place net_idx
+// (0..WIFI_NETS-1), "" for a free place. wifi_add() saves a network, or the
+// new password of a saved one; without a connection the board tries it a
+// moment later. A removed
 // network that is in use stays connected until the link drops. Both return
 // NULL, or what is wrong: with the request, or wifi_failed when the board
 // could not store it.
-const char *wifi_saved(int idx);
-const char *wifi_add(const char *ssid, const char *pass);
+const char *wifi_saved(int net_idx);
+const char *wifi_add(const char *ssid, const char *password);
 const char *wifi_remove(const char *ssid);
 extern const char wifi_failed[];
 

@@ -96,7 +96,7 @@ function loadWifi() {
 // One request after the other, so the browser needs a single connection to
 // the board. The empty icon above saves it the request for one.
 function load() {
-	return fetch('/api/fans').then(function(res) { return res.json() }).then(show)
+	return fetch('/api/fans').then(function(res) { return res.json() }).then(show).catch(function() {})
 		.then(loadVpn).then(loadWifi).then(loadFw).catch(function() { fw.textContent = '?' })
 }
 
@@ -105,6 +105,7 @@ function show(list) {
 		var row = rows[i] || (rows[i] = add(i + 1, 'Fan ' + (i + 1)))
 		row.range.value = row.val.textContent = pct
 	})
+	if (!rows.all) rows.all = add('all', 'All')
 }
 
 function set(id, pct) {
@@ -159,8 +160,8 @@ nets.onchange = function() {
 save.onclick = function() { post('/api/wifi', ssid.value + '\n' + pass.value).then(loadWifi) }
 hostsave.onclick = function() {
 	post('/api/name', host.value).then(function(text) {
-		// The old name is gone, a page opened by it moves to the new one.
-		if (text && location.hostname.slice(-6) == '.local') location.hostname = host.value + '.local'
+		// The old name is gone, a page opened by a name moves to the new one.
+		if (text && /[a-z]/.test(location.hostname)) location.hostname = host.value + '.local'
 	})
 }
 // The tunnel switches over a moment after the answer, so look twice.
@@ -204,5 +205,5 @@ fwsend.onclick = function() {
 		req.send(file)
 	}).catch(function() { log.textContent = line + '\nthe board does not answer' })
 }
-load().then(function() { add('all', 'All') })
+load()
 </script>
