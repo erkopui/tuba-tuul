@@ -36,6 +36,10 @@ PublicKey = ...
 Endpoint = vpn.example.com:51820"></textarea>
 <p><button id=vpnsave>Save</button> <button id=vpnoff>Remove</button>
 
+<h2>Firmware</h2>
+<p>Running: <b id=fw></b>
+<p><input id=fwfile type=file accept=.bin> <button id=fwsend>Update</button>
+
 <script>
 var rows = []
 
@@ -63,8 +67,16 @@ function loadVpn() {
 	})
 }
 
+function loadFw() {
+	return fetch('/api/ota').then(function(res) { return res.json() }).then(function(info) {
+		fw.textContent = info.version + '  ' + info.board + '  ' + info.slot
+		return info.slot
+	})
+}
+
 function load() {
 	loadVpn()
+	loadFw().catch(function() { fw.textContent = '?' })
 	return fetch('/api/fans').then(function(res) { return res.json() }).then(show)
 }
 
@@ -137,5 +149,34 @@ vpnsave.onclick = function() {
 	})
 }
 vpnoff.onclick = function() { post('/api/vpn', '', 'DELETE').then(vpnChanged) }
+// After an update the board reboots into the other slot. Ask until it
+// answers again; the same slot as before means the new firmware did not start.
+function fwWait(line, slot) {
+	setTimeout(function() {
+		loadFw().then(function(now) {
+			log.textContent = line + '\n' + (now == slot ? 'the new firmware did not start, the previous one is running'
+			                                             : 'the new firmware is running')
+			load()
+		}).catch(function() { fwWait(line, slot) })
+	}, 2000)
+}
+fwsend.onclick = function() {
+	var file = fwfile.files[0]
+	if (!file) return
+	var line = 'POST /api/ota  ' + file.name
+	loadFw().then(function(slot) {
+		var req = new XMLHttpRequest()
+		req.open('POST', '/api/ota')
+		req.upload.onprogress = function(ev) {
+			log.textContent = line + '\n' + Math.round(100 * ev.loaded / ev.total) + ' %'
+		}
+		req.onload = function() {
+			log.textContent = line + '\n' + req.status + '  ' + req.responseText
+			if (req.status == 200) fwWait(log.textContent, slot)
+		}
+		req.onerror = function() { log.textContent = line + '\nupload failed' }
+		req.send(file)
+	}).catch(function() { log.textContent = line + '\nthe board does not answer' })
+}
 load().then(function() { add('all', 'All') })
 </script>

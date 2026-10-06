@@ -1,6 +1,7 @@
 # fan-pwm
 
-8-channel 25 kHz PWM fan controller with a REST API, Modbus TCP and an optional WireGuard VPN.
+8-channel 25 kHz PWM fan controller with a REST API, Modbus TCP, an optional WireGuard VPN and
+firmware update over WiFi.
 ESP-IDF firmware for the LCKFB ESP32S3R8N8 board (LCSC C20626143, ESP32-S3R8 + 8 MB flash).
 
 WiFi and the TCP/IP stack run on core 0, the application (main loop + HTTP server) on core 1.
@@ -38,6 +39,9 @@ Only Docker is needed, `idf.sh` runs `idf.py` in the official `espressif/idf` im
     ./idf.sh build
     ./idf.sh -p /dev/ttyACM0 flash monitor     # exit the monitor with Ctrl+]
 
+After that first time a new firmware can also be sent over WiFi, see
+[Firmware update](#firmware-update).
+
 The serial port may also show up as `/dev/ttyUSB0`.
 
 ## WiFi setup
@@ -61,7 +65,8 @@ Status LED (GPIO 48): short flash every 2 s = connected, slow blink = connecting
     curl -d $'ssid\npassword' http://fans2.local/api/wifi   # change WiFi and reboot
     curl http://fans2.local/api/wifi/scan            # networks in range, strongest first
 
-The VPN requests are under [VPN](#vpn-wireguard).
+The VPN requests are under [VPN](#vpn-wireguard), the update under
+[Firmware update](#firmware-update).
 
 A speed change is not applied at once: the fan ramps to the new speed, 10 s for the full 0 to 100 %
 range (`FAN_FADE_MS` in `main/config.h`), smaller changes proportionally less. `?fade=<ms>` overrides
@@ -70,8 +75,8 @@ that time for one request, 0 to 40000. The API always reports the target speed.
 The POST requests answer with the new speed list.
 
 http://fans2.local/ is a test page: a slider and 0/50/100 buttons per fan, an "All" row, a field for
-the fade time, a log line with the last request and the answer of the device, and the WiFi and
-VPN settings.
+the fade time, a log line with the last request and the answer of the device, the WiFi and
+VPN settings and the firmware update.
 
 There is no authentication, keep the device on a trusted network.
 
@@ -135,6 +140,47 @@ and `DNS` too.
   The same goes for the setup AP: change `AP_PASS` in `main/config.h`, or someone in radio range
   can point the tunnel at a server of their own while the AP is up.
 
+## Firmware update
+
+A new firmware can be sent over WiFi, or through the VPN. On the test page pick
+`build/fan-pwm.bin` under "Firmware" and press Update, or send the file:
+
+    curl --data-binary @build/fan-pwm.bin http://fans2.local/api/ota   # write it and reboot into it
+    curl http://fans2.local/api/ota      # {"version":"68db7ba","board":"fans8","slot":"ota_0"}
+
+The upload takes about 20 s, then the board reboots. A reboot switches all fans off until their
+speeds are set again. WiFi and VPN settings stay.
+
+The flash holds two firmware slots of 2 MB (`partitions.csv`). The new firmware is written to the
+one that is not running, so a failed upload leaves the running firmware as it was.
+
+A file is refused, before anything is written, unless it is
+
+- a firmware for this chip and of this project (`fan-pwm`),
+- and for this board type (`BOARD_TYPE` in `main/config.h`).
+
+A damaged or incomplete file is refused at the end of the upload.
+
+After the reboot the new firmware runs on trial. The first connection to its web server confirms
+it: the test page, which asks by itself, or any API request. Modbus does not count. When it is not
+confirmed within 5 minutes (`OTA_CONFIRM_MIN`), or it crashes or is reset before, the board goes
+back to the previous firmware. So a firmware that cannot be reached replaces itself with the one
+that could.
+
+The board type is the only thing a firmware says about the hardware it is for. The board takes
+its own type from the firmware it runs, so the first firmware, flashed over USB, has to be the
+right one.
+
+- The version is what `git describe` said when the firmware was built. An older version is
+  accepted like a newer one.
+- The firmware is not signed and the API has no authentication: whoever can reach the board, by
+  WiFi or through the VPN, can replace its firmware.
+- While the file is uploaded the web API answers nobody else, it takes one request at a time.
+  Modbus keeps answering. The fan PWM signal comes from hardware and does not depend on either.
+- A board flashed before the two slots were added needs one flash over USB to get them. Its
+  settings stay.
+- Flashing over USB always writes the first slot and makes it the one to start.
+
 ## Source
 
 | File            | What                                   |
@@ -145,6 +191,8 @@ and `DNS` too.
 | `main/http.c`   | REST API                               |
 | `main/modbus.c` | Modbus TCP server (esp-modbus)         |
 | `main/vpn.c`    | WireGuard tunnel (esp_wireguard)       |
+| `main/ota.c`    | firmware update over the air           |
+| `partitions.csv` | flash layout with two firmware slots  |
 | `main/index.html` | test page served at `/`              |
 | `main/wifi.c`   | WiFi station + setup AP, mDNS          |
 | `main/led.c`    | status LED                             |

@@ -40,6 +40,11 @@
 #define VPN_RETRY_MS    30000   // wait this long after a failed start
 #define VPN_RESOLVE_MS  120000  // tunnel down this long: look the peer's name up again
 
+// Firmware update over the air (see ota.c). An update built for another board
+// type is refused.
+#define BOARD_TYPE      "fans8"     // 15 characters at most
+#define OTA_CONFIRM_MIN 5           // minutes a new firmware has to be confirmed, else the old one comes back
+
 #define HOSTNAME        "fans2"         // http://fans2.local/
 #define AP_SSID         "fan-pwm-setup"
 #define AP_PASS         "fancontrol"    // at least 8 characters

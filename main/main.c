@@ -1,9 +1,9 @@
-// 8-channel 25 kHz PWM fan controller with a REST API, Modbus TCP and an
-// optional WireGuard VPN, for ESP32-S3.
+// 8-channel 25 kHz PWM fan controller with a REST API, Modbus TCP, an
+// optional WireGuard VPN and firmware update over the air, for ESP32-S3.
 //
 // WiFi and the TCP/IP stack run on core 0, this task and the HTTP server on
 // core 1 (see sdkconfig.defaults). Settings are in config.h, the API in http.c,
-// Modbus in modbus.c, the VPN in vpn.c.
+// Modbus in modbus.c, the VPN in vpn.c, the update in ota.c.
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,6 +15,7 @@
 #include "led.h"
 #include "modbus.h"
 #include "mtimer.h"
+#include "ota.h"
 #include "vpn.h"
 #include "wifi.h"
 
@@ -46,6 +47,7 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
 
+    ota_init();
     wifi_init();
     modbus_start();
     http_start();
@@ -54,6 +56,7 @@ void app_main(void)
     for (;;) {
         esp_task_wdt_reset();
         wifi_poll();
+        ota_poll();
         led_poll(wifi_state());
         vTaskDelay(pdMS_TO_TICKS(20));
     }

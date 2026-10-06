@@ -9,19 +9,23 @@
 //   GET  /api/vpn         -> {"state":"up","tunnel":"10.0.0.2/24 via vpn.example.com:51820"}
 //   POST /api/vpn         body = WireGuard client config   store it, the tunnel switches over
 //   DELETE /api/vpn                             remove the VPN config and the tunnel
-//   GET  /                                      test page (index.html) with sliders, WiFi and VPN setup
+//   GET  /api/ota         -> {"version":"1.2","board":"fans8","slot":"ota_0"}   the running firmware
+//   POST /api/ota         body = firmware file (.bin)   write it to the other slot and reboot into it
+//   GET  /                                      test page (index.html) with sliders, WiFi, VPN and update
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <sys/param.h>
+#include <sys/socket.h>
+#include "esp_app_desc.h"
 #include "esp_http_server.h"
 #include "esp_system.h"
 #include "mbedtls/platform_util.h"
 #include "config.h"
 #include "fan.h"
 #include "http.h"
+#include "ota.h"
 #include "vpn.h"
 #include "wifi.h"
 
@@ -154,6 +158,23 @@ static esp_err_t wifi_scan_get(httpd_req_t *req)
     return httpd_resp_sendstr_chunk(req, NULL);
 }
 
+// Answers and reboots. A reboot right behind the answer loses it when the
+// link is slow, so the client is asked to close the connection and that is
+// waited for, 5 s at most.
+static esp_err_t reply_and_reboot(httpd_req_t *req, const char *text)
+{
+    int sock = httpd_req_to_sockfd(req);
+    struct timeval timeout = { .tv_sec = 5 };
+    char byte;
+
+    httpd_resp_set_hdr(req, "Connection", "close");
+    httpd_resp_sendstr(req, text);
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    recv(sock, &byte, 1, 0);
+    esp_restart();
+    return ESP_OK;
+}
+
 static esp_err_t wifi_post(httpd_req_t *req)
 {
     char body[32 + 64 + 8];     // ssid + password + line ends
@@ -179,10 +200,7 @@ static esp_err_t wifi_post(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
     }
 
-    httpd_resp_sendstr(req, "saved, rebooting\n");
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
-    return ESP_OK;
+    return reply_and_reboot(req, "saved, rebooting\n");
 }
 
 static esp_err_t vpn_get(httpd_req_t *req)
@@ -228,6 +246,68 @@ static esp_err_t vpn_delete(httpd_req_t *req)
     return httpd_resp_sendstr(req, "removed\n");
 }
 
+static esp_err_t ota_get(httpd_req_t *req)
+{
+    char buf[120];
+
+    // The version is what git describe says, with no characters that JSON needs escaped.
+    snprintf(buf, sizeof(buf), "{\"version\":\"%s\",\"board\":\"" BOARD_TYPE "\",\"slot\":\"%s\"}",
+             esp_app_get_description()->version, ota_slot());
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, buf);
+}
+
+static esp_err_t ota_post(httpd_req_t *req)
+{
+    if (!same_origin(req)) {
+        return ESP_OK;
+    }
+    if (req->content_len > ota_size_max()) {    // not worth receiving
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "the file is larger than a firmware slot");
+        return ESP_FAIL;    // closes the connection
+    }
+    // The file is passed on in full chunks. After a problem the rest of it is
+    // still received, a browser reads the answer only when its upload is through.
+    static uint8_t chunk[OTA_CHUNK];
+    const char *problem = NULL;
+    bool begun = false;
+    size_t left = req->content_len, fill = 0;
+    while (left > 0) {
+        int n = httpd_req_recv(req, (char *)chunk + fill, MIN(left, OTA_CHUNK - fill));
+        if (n <= 0) {       // connection lost or stalled
+            ota_abort();
+            return ESP_FAIL;
+        }
+        fill += n;
+        left -= n;
+        if (fill == OTA_CHUNK || left == 0) {
+            if (!problem) {
+                problem = begun ? ota_write(chunk, fill) : ota_begin(chunk, fill);
+            }
+            begun = true;
+            fill = 0;
+        }
+    }
+    if (!problem) {
+        problem = begun ? ota_end() : "body must be the firmware file (.bin)";
+    }
+    if (problem) {
+        ota_abort();
+        return httpd_resp_send_err(req, problem == ota_failed ? HTTPD_500_INTERNAL_SERVER_ERROR
+                                                              : HTTPD_400_BAD_REQUEST, problem);
+    }
+    return reply_and_reboot(req, "stored, rebooting. Open the page or send a request within " STR(OTA_CONFIRM_MIN)
+                                 " minutes, else the previous firmware comes back\n");
+}
+
+// A client that connects to the web server shows that this firmware can be
+// reached, which ends its trial after an update (ota.c).
+static esp_err_t client_open(httpd_handle_t server, int sockfd)
+{
+    ota_confirm();
+    return ESP_OK;
+}
+
 void http_start(void)
 {
     static const httpd_uri_t routes[] = {
@@ -239,10 +319,14 @@ void http_start(void)
         { .uri = "/api/vpn",     .method = HTTP_GET,  .handler = vpn_get },
         { .uri = "/api/vpn",     .method = HTTP_POST, .handler = vpn_post },
         { .uri = "/api/vpn",     .method = HTTP_DELETE, .handler = vpn_delete },
+        { .uri = "/api/ota",     .method = HTTP_GET,  .handler = ota_get },
+        { .uri = "/api/ota",     .method = HTTP_POST, .handler = ota_post },
     };
     httpd_handle_t server;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.core_id = 1;
+    config.stack_size = 6144;           // checking a new firmware left 920 bytes of the default 4096
+    config.open_fn = client_open;
     config.lru_purge_enable = true;     // drop the oldest idle connection when all slots are taken
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.max_uri_handlers = sizeof(routes) / sizeof(routes[0]);
