@@ -1,6 +1,4 @@
 #pragma once
 
-#include "wifi.h"
-
-void led_init(void);
-void led_poll(wifi_state_t state);  // call from the main loop
+// Sets the LED pin up and starts the task that blinks it.
+void led_start(void);

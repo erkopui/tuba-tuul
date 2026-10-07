@@ -10,14 +10,21 @@
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "config.h"
+#include "display.h"
 #include "fan.h"
 #include "http.h"
 #include "led.h"
 #include "modbus.h"
 #include "mtimer.h"
 #include "ota.h"
+#include "stat.h"
 #include "vpn.h"
 #include "wifi.h"
+
+// sdkconfig.defaults is only read when there is no sdkconfig yet.
+#ifndef CONFIG_SPIRAM_XIP_FROM_PSRAM
+#error "needs the PSRAM settings: delete sdkconfig so that sdkconfig.defaults applies"
+#endif
 
 // Time since boot for mtimer.
 static uint32_t timer_get(uint16_t *msec)
@@ -33,7 +40,7 @@ void app_main(void)
 
     // Fans first, so they get a defined (off) signal as early as possible.
     fan_init();
-    led_init();
+    led_start();
 
     esp_task_wdt_config_t wdt = {
         .timeout_ms = WDT_TIMEOUT_MS,
@@ -52,12 +59,14 @@ void app_main(void)
     modbus_start();
     http_start();
     vpn_start();
+    display_start();
 
     for (;;) {
+        stat_begin(STAT_MAIN);
         esp_task_wdt_reset();
         wifi_poll();
         ota_poll();
-        led_poll(wifi_state());
+        stat_end(STAT_MAIN);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }

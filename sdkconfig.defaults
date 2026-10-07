@@ -38,3 +38,12 @@ CONFIG_ESP_NETIF_BRIDGE_EN=y
 # Taking the tunnel away while connections are open through it needs about
 # 2.1 KB of the TCP/IP task's stack, the default 3072 leaves too little spare.
 CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=4096
+
+# Test: the 8 MB PSRAM of the ESP32-S3R8 (octal SPI, GPIO 33..37), with the
+# code and the constants of the firmware copied into it at start and run from
+# there instead of from flash. malloc() stays in the internal RAM.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y

@@ -27,6 +27,25 @@
 #define LED_GPIO        48      // green user LED on the LCKFB ESP32S3R8N8 board
 #define LED_ON          1       // level that lights the LED
 
+// OLED displays with an SSD1306 or SSD1315 on I2C, each on a bus of its own:
+// one of 128x64 for the fans and the network, one of 128x32 for time and date.
+// The firmware runs without them too. (GPIO 48 drives the LED.)
+#define DISPLAY_SDA_GPIO    47
+#define DISPLAY_SCL_GPIO    38
+#define DISPLAY_ADDR        0x3C    // 0x3D with the address pin of the display high
+#define DISPLAY2_SDA_GPIO   39
+#define DISPLAY2_SCL_GPIO   40
+#define DISPLAY2_ADDR       0x3C
+#define DISPLAY2_UPSIDE_DOWN 1      // 1 turns the picture by 180 degrees
+#define DISPLAY_VIEW_MS     4000    // each view is shown this long
+#define DISPLAY_BRIGHTNESS  255     // 0..255 at start (the display's own default is 127)
+#define DISPLAY_UPSIDE_DOWN 0       // 1 turns the picture by 180 degrees
+
+// Local time for the display: Estonia, with summer time from the last Sunday
+// of March 03:00 to the last Sunday of October 04:00. The board has no list
+// of time zones, the rule itself is given (POSIX TZ).
+#define TIME_ZONE       "EET-2EEST,M3.5.0/3,M10.5.0/4"
+
 #define WDT_TIMEOUT_MS  30000   // reboot if the main loop or a CPU core hangs this long
 
 #define WIFI_NETS           5       // saved networks, 8 at most; a smaller number forgets the saved ones

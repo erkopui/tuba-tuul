@@ -92,7 +92,8 @@ http://fans2.local/ is the page of the board, with three views under a menu:
 
 - Fans: a slider and 0/50/100 buttons per fan, an "All" row, a field for the fade time.
 - Network: the saved WiFi networks, the scan, and the VPN config.
-- System: the name of the board and the firmware update.
+- System: the name of the board, the firmware update, the brightness of the displays, and how
+  long the tasks of the firmware take.
 
 Below every view is a Refresh button, which reads the view again from the board, and a log line
 with the last request and the answer of the board. The page is
@@ -202,6 +203,56 @@ right one.
   settings stay.
 - Flashing over USB always writes the first slot and makes it the one to start.
 
+## Display
+
+Two small OLED displays can be connected, each with an SSD1306 or SSD1315 on I2C and on two pins
+of its own: one of 128x64 pixels (for example the 0.96" HS96L03W2C03) and one of 128x32. The
+firmware runs the same without them, and a display connected later is found at once.
+
+| Display | 128x64  | 128x32  |
+|---------|---------|---------|
+| VCC     | 3V3     | 3V3     |
+| GND     | GND     | GND     |
+| SDA     | GPIO 47 | GPIO 39 |
+| SCL     | GPIO 38 | GPIO 40 |
+
+Each shows two views in turn, 4 s each. The larger one: the speed of every fan in percent, and
+the network: the name of the board, its IP address, its address in the VPN, and a line like
+`WiFi ok  VPN ok` (`..` = on the way, `AP` = the setup AP is up, with its name and address above,
+`off`, `err`). The smaller one: the time and the date, as large as they fit. The time comes from
+the time server once there is WiFi (dashes until then) and is shown in the time zone `TIME_ZONE`
+of `main/config.h`. The pins, the
+I2C address, the time per view, the brightness and a turn by 180 degrees are in `main/config.h`
+(`DISPLAY_...`). The brightness can also be tried out with the slider on the System view of the
+page, or with `curl -d 120 http://fans2.local/api/display` (0..255); that lasts until the next
+reboot.
+
+## Task times
+
+The firmware measures how long the work of each of its tasks takes, from one wait to the next:
+the last pass and the longest one since boot. It also counts the passes and keeps the time from
+the start of one pass to the start of the next, the last (`gap_us`) and the longest
+(`gap_max_us`), which shows how long a task had to wait for its turn. The System view of the page shows them, and so does
+
+    curl http://fans2.local/api/tasks
+    # [{"name":"main loop","last_us":27,"max_us":1106966,"max_at_ms":1650,"gap_us":20000,
+    #   "gap_max_us":1127000,"gap_max_at_ms":1650,"count":2881}, ...]
+
+`max_at_ms` and `gap_max_at_ms` tell when the longest ones ended, in ms since boot.
+
+| Name         | One pass is                                              |
+|--------------|----------------------------------------------------------|
+| main loop    | one round of WiFi and update trial, every 20 ms          |
+| LED          | one look at the LED, about every 30 ms, in a task of the lowest priority |
+| web request  | one request of the web server, an upload as a whole      |
+| Modbus write | one write put on the fan outputs                         |
+| VPN          | one connect attempt, or one look at the tunnel (each second) |
+| display      | one look at the displays, four times a second; a changed picture is sent |
+
+The time is the one on the clock: a pass that a task of higher priority or an interrupt cut into
+counts with that. The long pass of the main loop after boot is the search for the saved WiFi
+networks, about a second for each.
+
 ## Web page
 
 The page is built with [LiteJS](https://github.com/litejs/ui). Its source is in `web/`:
@@ -221,7 +272,7 @@ Node.js), then build the firmware:
     npm install        # once
     npm run build      # writes ../main/index.html
 
-The build joins the LiteJS engine, the helpers and the views into that one file of about 25 kB, so
+The build joins the LiteJS engine, the helpers and the views into that one file of about 27 kB, so
 the page needs nothing from the internet and works on the setup AP too. Note that the build tool
 also runs `git add -u`, which stages every changed file that git already tracks.
 
@@ -246,11 +297,13 @@ A view file holds a template and, under `%js`, the handlers of that view. Things
 |-----------------|----------------------------------------|
 | `main/config.h` | pins, PWM frequency, names, passwords  |
 | `main/main.c`   | start-up, watchdog, main loop          |
+| `main/display.c`| OLED display, `font.h` is its font     |
 | `main/fan.c`    | PWM outputs                            |
 | `main/http.c`   | REST API                               |
 | `main/modbus.c` | Modbus TCP server (esp-modbus)         |
 | `main/vpn.c`    | WireGuard tunnel (esp_wireguard)       |
 | `main/ota.c`    | firmware update over the air           |
+| `main/stat.c`   | pass times of the tasks                |
 | `partitions.csv` | flash layout with two firmware slots  |
 | `main/index.html` | the page served at `/`, built from `web/` |
 | `main/wifi.c`   | WiFi station + setup AP, mDNS          |

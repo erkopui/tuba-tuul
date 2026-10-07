@@ -12,6 +12,7 @@ var $ui = LiteJS({ home: "fans" })
 $d.wifi = {}
 $d.vpn = {}
 $d.ota = {}
+$d.display = {}
 
 // The menu shows which view is open.
 $ui.on("show", draw)

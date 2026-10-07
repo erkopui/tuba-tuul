@@ -129,6 +129,14 @@
 		flex: 1;
 		min-width: 5em;
 	}
+	.Dim {
+		color: var(--dim);
+	}
+	.Time {
+		text-align: right;
+		white-space: nowrap;
+		width: 4.6em;
+	}
 	.Row-val {
 		text-align: right;
 		white-space: nowrap;
@@ -141,8 +149,16 @@
 		flex-basis: 100%;
 		order: 1;
 	}
-	.sm [type=file] {
+	.sm [type=file],
+	.sm .Task > .Row-wide {
 		flex-basis: 100%;
+	}
+	.sm .Task {
+		font-size: .8em;
+	}
+	.sm .Time {
+		flex: 1 0 0;
+		width: auto;
 	}
 	.State.is-up {
 		color: #1a9d4b;

@@ -27,6 +27,7 @@
 #include "wireguard.h"
 #include "wireguardif.h"
 #include "config.h"
+#include "stat.h"
 #include "vpn.h"
 #include "wifi.h"
 
@@ -421,9 +422,20 @@ static bool wait_ms(int ms)
     return !reload;
 }
 
+// Asks for the time, once there is WiFi. With or without a VPN: the display
+// shows it too. Returns false when that cannot be started.
+static bool time_start(void)
+{
+    static bool started;
+    esp_sntp_config_t sntp = ESP_NETIF_SNTP_DEFAULT_CONFIG(NTP_SERVER);
+
+    started = started || esp_netif_sntp_init(&sntp) == ESP_OK;
+    return started;
+}
+
 static void vpn_task(void *arg)
 {
-    bool random_ready = false, sntp_ready = false, time_ready = false;
+    bool random_ready = false, time_ready = false;
 
     for (;;) {      // once for every config
         if (reload) {
@@ -437,6 +449,9 @@ static void vpn_task(void *arg)
         }
         state = problem ? problem : configured ? wifi_text : "off";
         while (!configured && wait_ms(1000)) {
+            if (wifi_state() == WIFI_CONNECTED) {
+                time_start();
+            }
         }
         while (wifi_state() != WIFI_CONNECTED && wait_ms(1000)) {
         }
@@ -445,10 +460,8 @@ static void vpn_task(void *arg)
         }
         // The random numbers for the handshakes, and the time. A failure here
         // must not take the fans down with it, so no ESP_ERROR_CHECK.
-        esp_sntp_config_t sntp = ESP_NETIF_SNTP_DEFAULT_CONFIG(NTP_SERVER);
         random_ready = random_ready || wireguard_platform_init() == ESP_OK;
-        sntp_ready = sntp_ready || esp_netif_sntp_init(&sntp) == ESP_OK;
-        if (!random_ready || !sntp_ready) {
+        if (!random_ready || !time_start()) {
             ESP_LOGE(TAG, "cannot start");
             state = "cannot start";
             wait_ms(VPN_RETRY_MS);
@@ -467,6 +480,7 @@ static void vpn_task(void *arg)
         while (!reload) {
             ip_addr_t endpoint_ip;
 
+            stat_begin(STAT_VPN);
             problem = wifi_state() != WIFI_CONNECTED ? wifi_text
                     : address_clash(&config) ? clash_text
                     : !endpoint_resolve(&endpoint_ip) ? "cannot find the Endpoint address"
@@ -478,19 +492,22 @@ static void vpn_task(void *arg)
             if (problem && state != problem) {
                 ESP_LOGW(TAG, "%s", problem);
             }
+            stat_end(STAT_VPN);
             // Watch the tunnel, WireGuard keeps it alive by itself. After a
             // problem try again in VPN_RETRY_MS. Without one, look the name up
             // again when the tunnel stays down for VPN_RESOLVE_MS: the peer
             // may have moved to a new address.
             int limit_ms = problem ? VPN_RETRY_MS : VPN_RESOLVE_MS;
             for (int down_ms = 0, seconds = 1; down_ms < limit_ms && !reload; down_ms += 1000, seconds++) {
+                stat_begin(STAT_VPN);
                 bool wifi_up = wifi_state() == WIFI_CONNECTED;
 
-                if (wifi_up == (problem == wifi_text)) {
-                    break;      // WiFi went away or came back: look at it again now
-                }
-                if (seconds % 30 == 0 && problem != clash_text && address_clash(&config)) {
-                    break;      // the WiFi network changed under the tunnel
+                // WiFi went away or came back, or its network changed under the
+                // tunnel (looked at every 30 s): look at it all again now.
+                if (wifi_up == (problem == wifi_text)
+                        || (seconds % 30 == 0 && problem != clash_text && address_clash(&config))) {
+                    stat_end(STAT_VPN);
+                    break;
                 }
                 if (wifi_up && esp_netif_tcpip_exec(tunnel_is_up, NULL) == ESP_OK) {
                     state = "up";
@@ -498,6 +515,7 @@ static void vpn_task(void *arg)
                 } else {
                     state = problem ? problem : "connecting";
                 }
+                stat_end(STAT_VPN);
                 vTaskDelay(pdMS_TO_TICKS(1000));
             }
         }

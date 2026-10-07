@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.c" "fan.c" "http.c" "led.c" "modbus.c" "mtimer.c" "ota.c" "vpn.c" "wifi.c"
+idf_component_register(SRCS "main.c" "display.c" "fan.c" "http.c" "led.c" "modbus.c" "mtimer.c" "ota.c" "stat.c" "vpn.c" "wifi.c"
                        INCLUDE_DIRS "."
                        EMBED_FILES "index.html")
 

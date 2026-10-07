@@ -16,6 +16,31 @@
 			@submit "otaSend"
 			input.Row-wide[name=file][type=file][accept=".bin"]
 			button ;txt updating ? "Updating..." : "Update"
+		h3 Display
+		/ The handler stands on the row: on the slider itself it would not be
+		/ set while the brightness has not been read yet.
+		label.Row
+			@input "brightSet", "input"
+			span Brightness
+			input.Row-wide[type=range][max=255] ;val display.brightness, 1
+			b.Row-val ;txt display.brightness
+		h3 Tasks
+		/ gap: the time from the start of one pass to the start of the next.
+		.Row.Task.Dim
+			span.Row-wide Pass
+			span.Time last
+			span.Time max
+			span.Time gap
+			span.Time max gap
+			span.Time count
+		.Row.Task
+			;each! "task", times
+			span.Row-wide ;txt task.name
+			span.Time ;txt us(task.last_us)
+			b.Time ;txt us(task.max_us)
+			span.Time ;txt us(task.gap_us)
+			b.Time ;txt us(task.gap_max_us)
+			span.Time ;txt task.count
 
 %js
 	// After an update the board reboots into the other slot. Ask until it
@@ -36,11 +61,39 @@
 		$d.updating = 0
 		say(text)
 	}
+	var times = $d.times = []
+	// A time in at most three digits and its unit, so that it fits its column.
+	$d.us = function(us) {
+		var unit = us < 1000 ? " µs" : (us /= 1000) < 1000 ? " ms" : (us /= 1000) < 600 ? " s" : (us /= 60, " min")
+		return (us < 10 && unit != " µs" ? us.toFixed(1) : Math.round(us)) + unit
+	}
 	$ui.ping("system", function() {
 		get("ota", function() {
 			draw()
-			get("wifi", draw)
+			get("wifi", function() {
+				draw()
+				get("tasks", function(list, err) {
+					if (!err) fill(times, list)
+					draw()
+					get("display", draw)
+				})
+			})
 		})
+	})
+	// The slider sends while it moves: one request at a time, and the place
+	// it stands on when the answer comes is sent next.
+	function brightSend() {
+		var value = $d.display.brightness
+		$d.brightBusy = 1
+		send("POST", "display", "" + value, function() {
+			$d.brightBusy = 0
+			if ($d.display.brightness != value) brightSend()
+		})
+	}
+	$ui.on("brightSet", function(e, el) {
+		$d.display.brightness = el.value
+		draw()
+		if (!$d.brightBusy) brightSend()
 	})
 	// What is typed is kept, else the next drawing puts the old name back.
 	$ui.on("nameType", function(e, el) {

@@ -12,6 +12,7 @@
 #include "config.h"
 #include "fan.h"
 #include "modbus.h"
+#include "stat.h"
 
 static void *slave;
 
@@ -24,6 +25,7 @@ static void modbus_task(void *arg)
         if (mbc_slave_get_param_info(slave, &info, 1000) != ESP_OK || !(info.type & MB_EVENT_HOLDING_REG_WR)) {
             continue;
         }
+        stat_begin(STAT_MODBUS);
         // The driver has already stored the new speeds in fan_percent[],
         // fan_set() limits them to 100 and puts them on the outputs.
         for (int i = info.mb_offset; i < info.mb_offset + (int)info.size && i < FAN_COUNT; i++) {
@@ -32,6 +34,7 @@ static void modbus_task(void *arg)
             mbc_slave_unlock(slave);
             fan_set(i, percent, FAN_FADE_MS);
         }
+        stat_end(STAT_MODBUS);
     }
 }
 

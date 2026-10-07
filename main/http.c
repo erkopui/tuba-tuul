@@ -14,6 +14,13 @@
 //   DELETE /api/vpn                             remove the VPN config and the tunnel
 //   GET  /api/ota         -> {"version":"1.2","board":"fans8","slot":"ota_0"}   the running firmware
 //   POST /api/ota         body = firmware file (.bin)   write it to the other slot and reboot into it
+//   GET  /api/display     -> {"brightness":255}
+//   POST /api/display     body "120"            brightness of the display 0..255, until the next reboot
+//   GET  /api/tasks       -> [{"name":"main loop","last_us":40,"max_us":900,"max_at_ms":1500,"gap_us":20000,
+//                             "gap_max_us":21000,"gap_max_at_ms":1500,"count":1234}, ...]
+//                                               last and longest pass of each task, last and longest time
+//                                               from one pass to the next, when the longest ones ended (ms
+//                                               since boot), number of passes (stat.h)
 //   GET  /                                      the page (index.html): fans, network, system
 
 #include <stdio.h>
@@ -26,9 +33,11 @@
 #include "esp_system.h"
 #include "mbedtls/platform_util.h"
 #include "config.h"
+#include "display.h"
 #include "fan.h"
 #include "http.h"
 #include "ota.h"
+#include "stat.h"
 #include "vpn.h"
 #include "wifi.h"
 
@@ -70,6 +79,19 @@ static int read_body(httpd_req_t *req, char *buf, size_t size)
     return len;
 }
 
+// Reads a body that is one number, 0..max_value, with or without a line end.
+// Returns the number, or -1 for anything else.
+static long read_number(httpd_req_t *req, long max_value)
+{
+    char body[8], *end;
+
+    if (read_body(req, body, sizeof(body)) <= 0) {
+        return -1;
+    }
+    long value = strtol(body, &end, 10);
+    return end == body || end[strspn(end, "\r\n")] || value < 0 || value > max_value ? -1 : value;
+}
+
 // Browsers send an Origin header with cross-site POSTs. Refuse those, so a
 // web page somewhere else cannot change the fans or the WiFi behind our back.
 // The page itself must be opened by our name or by IP address (with or
@@ -96,7 +118,7 @@ static bool same_origin(httpd_req_t *req)
 
 static esp_err_t fans_post(httpd_req_t *req)
 {
-    char body[8], query[32], val[8], *end;
+    char query[32], val[8], *end;
     long fade = FAN_FADE_MS;
 
     if (!same_origin(req)) {
@@ -113,11 +135,8 @@ static esp_err_t fans_post(httpd_req_t *req)
     const char *id = req->uri + strlen("/api/fans/");
     bool all = strncmp(id, "all", 3) == 0 && (id[3] == 0 || id[3] == '?');
 
-    if (read_body(req, body, sizeof(body)) <= 0) {
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body must be speed 0..100");
-    }
-    long pct = strtol(body, &end, 10);
-    if (end == body || end[strspn(end, "\r\n")] || pct < 0 || pct > 100) {
+    long pct = read_number(req, 100);
+    if (pct < 0) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body must be speed 0..100");
     }
 
@@ -362,6 +381,47 @@ static esp_err_t ota_post(httpd_req_t *req)
                                  " minutes, else the previous firmware comes back\n");
 }
 
+static esp_err_t display_get(httpd_req_t *req)
+{
+    char buf[32];
+
+    snprintf(buf, sizeof(buf), "{\"brightness\":%d}", display_brightness());
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, buf);
+}
+
+static esp_err_t display_post(httpd_req_t *req)
+{
+    if (!same_origin(req)) {
+        return ESP_OK;
+    }
+    long value = read_number(req, 255);
+    if (value < 0) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body must be brightness 0..255");
+    }
+    display_brightness_set(value);
+    return display_get(req);
+}
+
+static esp_err_t tasks_get(httpd_req_t *req)
+{
+    char buf[1024];
+
+    stat_json(buf, sizeof(buf));
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, buf);
+}
+
+// Every request goes through here, for its time in /api/tasks. The handler
+// of the route is in user_ctx.
+static esp_err_t timed(httpd_req_t *req)
+{
+    stat_begin(STAT_HTTP);
+    esp_err_t err = ((esp_err_t (*)(httpd_req_t *))req->user_ctx)(req);
+    stat_end(STAT_HTTP);
+    return err;
+}
+
 // A client that connects to the web server shows that this firmware can be
 // reached, which ends its trial after an update (ota.c).
 static esp_err_t client_open(httpd_handle_t server, int sockfd)
@@ -386,6 +446,9 @@ void http_start(void)
         { .uri = "/api/vpn",     .method = HTTP_DELETE, .handler = vpn_delete },
         { .uri = "/api/ota",     .method = HTTP_GET,  .handler = ota_get },
         { .uri = "/api/ota",     .method = HTTP_POST, .handler = ota_post },
+        { .uri = "/api/tasks",   .method = HTTP_GET,  .handler = tasks_get },
+        { .uri = "/api/display", .method = HTTP_GET,  .handler = display_get },
+        { .uri = "/api/display", .method = HTTP_POST, .handler = display_post },
     };
     httpd_handle_t server;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -398,6 +461,9 @@ void http_start(void)
     ESP_ERROR_CHECK(httpd_start(&server, &config));
 
     for (int i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
-        httpd_register_uri_handler(server, &routes[i]);
+        httpd_uri_t route = routes[i];
+        route.user_ctx = route.handler;
+        route.handler = timed;
+        httpd_register_uri_handler(server, &route);
     }
 }
