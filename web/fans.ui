@@ -1,0 +1,61 @@
+
+%view fans #main
+	section.Card
+		label.Row
+			span Fade
+			input[type=number][min=0][max=40000][step=500][placeholder=default][autocomplete=off]
+				;val fade
+				@input "fadeSet"
+			span ms for 0 to 100 %
+		/ On a narrow screen (sm) the slider gets a line of its own.
+		.Row.Fan
+			;each! "fan", rows
+			@input "fanMove", "input"
+			@change "fanSet", "input"
+			@click "fanSet", "button"
+			@pointercancel "fanBack"
+			span.Row-name ;txt fan.name
+			input.Row-wide[type=range][max=100] ;val fan.pct, 1
+			b.Row-val ;txt fan.pct + " %"
+			button[value=0] 0
+			button[value=50] 50
+			button[value=100] 100
+
+%js
+	var rows = $d.rows = []
+	// A row for each fan and one for all of them.
+	function fansShow(list) {
+		list.forEach(function(pct, i) {
+			rows[i] = { id: i + 1, name: "Fan " + (i + 1), pct: pct, was: pct }
+		})
+		rows[list.length] = rows[list.length] || { id: "all", name: "All", pct: 0, was: 0 }
+		draw()
+	}
+	function fansLoad() {
+		get("fans", function(list, err) {
+			if (!err) fansShow(list)
+		})
+	}
+	$ui.ping("fans", fansLoad)
+	$ui.on("fadeSet", function(e, el) {
+		$d.fade = el.value
+	})
+	$ui.on("fanMove", function(e, el) {
+		El.scope(el).fan.pct = el.value
+		draw()
+	})
+	// A swipe that scrolls the page and begins on a slider has moved it: the
+	// browser takes the touch back, and the slider gets what it showed.
+	$ui.on("fanBack", function(e, el) {
+		var fan = El.scope(el).fan
+		fan.pct = fan.was
+		draw()
+	})
+	$ui.on("fanSet", function(e, el) {
+		var fan = El.scope(el).fan
+		fan.was = fan.pct = el.value
+		send("POST", "fans/" + fan.id + ($d.fade ? "?fade=" + $d.fade : ""), el.value, function(text) {
+			if (text) fansShow(JSON.parse(text))
+			else fansLoad()
+		})
+	})

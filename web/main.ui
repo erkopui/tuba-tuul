@@ -1,0 +1,189 @@
+
+/ What every view shares: the styles, the menu above, Refresh and the last
+/ request below. A view is one file each: fans.ui, network.ui, system.ui.
+
+%css
+	html {
+		--accent: #0a7cff;
+		--back: #f1f3f6;
+		--card: #fff;
+		--dim: #6b7785;
+		--line: #d5dbe2;
+		--text: #1c2733;
+		background: var(--back);
+		color: var(--text);
+	}
+	.is-dark {
+		--accent: #4da3ff;
+		--back: #12161b;
+		--card: #1d232b;
+		--dim: #8b96a3;
+		--line: #333c47;
+		--text: #e6eaee;
+		color-scheme: dark;
+	}
+	body {
+		font: 16px/1.4 system-ui, sans-serif;
+		margin: 0 auto;
+		max-width: 36em;
+		padding: 0 .8em 2em;
+	}
+	h3 {
+		color: var(--dim);
+		font-size: .8em;
+		letter-spacing: .06em;
+		margin: 2em 0 .6em;
+		text-transform: uppercase;
+	}
+	h3:first-child {
+		margin-top: 0;
+	}
+	button,
+	input,
+	select,
+	textarea {
+		background: var(--card);
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		box-sizing: border-box;
+		color: inherit;
+		font: inherit;
+		max-width: 100%;
+		padding: .35em .7em;
+	}
+	button {
+		cursor: pointer;
+	}
+	button:hover {
+		border-color: var(--accent);
+	}
+	button:active {
+		opacity: .6;
+	}
+	form button:not([type]) {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: var(--card);
+	}
+	input[type=file],
+	input[type=range] {
+		accent-color: var(--accent);
+		background: none;
+		border: 0;
+		padding: 0;
+	}
+	::file-selector-button {
+		background: var(--card);
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		color: inherit;
+		cursor: pointer;
+		font: inherit;
+		margin-right: .7em;
+		padding: .35em .7em;
+	}
+	textarea {
+		font: .85em/1.4 monospace;
+		width: 100%;
+	}
+	.Menu {
+		background: var(--line);
+		border-radius: 10px;
+		display: flex;
+		margin: .8em 0;
+		padding: 3px;
+	}
+	.Menu-item {
+		border-radius: 8px;
+		color: var(--dim);
+		flex: 1;
+		font-weight: 600;
+		padding: .5em;
+		text-align: center;
+		text-decoration: none;
+	}
+	.Menu-item.is-active {
+		background: var(--card);
+		box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+		color: var(--text);
+	}
+	.Card {
+		background: var(--card);
+		border-radius: 12px;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, .1);
+		overflow-wrap: anywhere;
+		padding: 1em 1.2em;
+	}
+	.Row {
+		align-items: center;
+		display: flex;
+		flex-wrap: wrap;
+		gap: .5em;
+		margin: .6em 0;
+	}
+	.Row-name {
+		overflow-wrap: normal;
+		width: 3em;
+	}
+	.Row-wide {
+		flex: 1;
+		min-width: 5em;
+	}
+	.Row-val {
+		text-align: right;
+		white-space: nowrap;
+		width: 3.2em;
+	}
+	.sm .Fan > .Row-name {
+		flex: 1;
+	}
+	.sm .Fan > .Row-wide {
+		flex-basis: 100%;
+		order: 1;
+	}
+	.sm [type=file] {
+		flex-basis: 100%;
+	}
+	.State.is-up {
+		color: #1a9d4b;
+	}
+	.Log {
+		background: #0b0e12;
+		border: 1px solid #333c47;
+		border-radius: 10px;
+		color: #cfd8e3;
+		font: .8em/1.5 monospace;
+		margin: .8em 0 0;
+		overflow-wrap: anywhere;
+		padding: .8em 1em;
+		white-space: pre-wrap;
+	}
+	.Log:empty {
+		display: none;
+	}
+
+%el Menu-item
+a.Menu-item
+	;cls "is-active", $el.hash.slice(1) == (url || $ui.home)
+
+%el Form
+form.Row[action="javascript:"]
+
+/ A field that a phone keyboard leaves as it was typed.
+%el Plain
+input[autocapitalize=off][autocomplete=off][autocorrect=off][spellcheck=false]
+
+%view #main #
+	nav.Menu
+		Menu-item[href="#fans"] Fans
+		Menu-item[href="#network"] Network
+		Menu-item[href="#system"] System
+	%slot
+	.Row
+		button Refresh
+			@click "refresh"
+	pre.Log ;txt log
+
+/ An address that names no view keeps the menu.
+%view 404 #main
+	p.Card Not found

@@ -1,0 +1,13 @@
+{
+  "name": "fan-pwm-web",
+  "private": true,
+  "description": "Source of the page in main/index.html, built with LiteJS",
+  "scripts": {
+    "build": "lj build --out=../main/index.html dev.html"
+  },
+  "devDependencies": {
+    "@litejs/cli": "26.8.0",
+    "@litejs/ui": "26.10.0",
+    "uglify-js": "3.19.3"
+  }
+}

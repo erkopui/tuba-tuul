@@ -1,0 +1,82 @@
+
+%view system #main
+	section.Card
+		h3 Name
+		Form
+			@submit "nameSave"
+			Plain[name=host][size=12] ;val wifi.name
+				@input "nameType"
+			span .local
+			button Save
+		h3 Firmware
+		p
+			span Running:
+			b ;txt " " + (ota.version ? ota.version + "  " + ota.board + "  " + ota.slot : "?")
+		Form
+			@submit "otaSend"
+			input.Row-wide[name=file][type=file][accept=".bin"]
+			button ;txt updating ? "Updating..." : "Update"
+
+%js
+	// After an update the board reboots into the other slot. Ask until it
+	// answers again; the same slot as before means the new firmware did not
+	// start.
+	function otaWait(line, slot) {
+		setTimeout(get, 2000, "ota", function(ota) {
+			if (!ota.slot) return otaWait(line, slot)
+			otaEnd(line + "\n" + (ota.slot == slot ?
+				"the new firmware did not start, the previous one is running" :
+				"the new firmware is running"))
+			// The reboot has switched the fans off, the open view may show it.
+			$ui.emit("refresh")
+		})
+	}
+	// One update at a time: Update is taken again from here on.
+	function otaEnd(text) {
+		$d.updating = 0
+		say(text)
+	}
+	$ui.ping("system", function() {
+		get("ota", function() {
+			draw()
+			get("wifi", draw)
+		})
+	})
+	// What is typed is kept, else the next drawing puts the old name back.
+	$ui.on("nameType", function(e, el) {
+		$d.wifi.name = el.value
+	})
+	$ui.on("nameSave", function(e, el) {
+		var host = $d.wifi.name = el.host.value
+		send("POST", "name", host, function(text) {
+			// The old name is gone, a page opened by a name moves to the new one.
+			if (text && /[a-z]/.test(location.hostname)) location.hostname = host + ".local"
+		})
+	})
+	$ui.on("otaSend", function(e, el) {
+		var req
+		, file = el.file.files[0]
+		, line = "POST /api/ota  " + (file && file.name)
+		if (!file || $d.updating) return
+		$d.updating = 1
+		say(line)
+		// The slot in use is asked now, it can have changed since the view opened.
+		get("ota", function(ota) {
+			if (!ota.slot) return otaEnd(line + "\nthe board does not answer")
+			req = xhr("POST", "/api/ota", function(err, text) {
+				// For dev.html, where the request object is used again.
+				req.upload.onprogress = null
+				// Chrome does not send a file again that was built again since.
+				line += "\n" + (err === 1 ?
+					"upload failed: no answer from the board, or the file has changed (then choose it again)" :
+					req.status + "  " + text)
+				if (err) return otaEnd(line)
+				say(line)
+				otaWait(line, ota.slot)
+			})
+			req.upload.onprogress = function(ev) {
+				say(line + "\n" + Math.round(100 * ev.loaded / ev.total) + " %")
+			}
+			req.send(file)
+		})
+	})

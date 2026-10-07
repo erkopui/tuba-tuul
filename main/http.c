@@ -14,7 +14,7 @@
 //   DELETE /api/vpn                             remove the VPN config and the tunnel
 //   GET  /api/ota         -> {"version":"1.2","board":"fans8","slot":"ota_0"}   the running firmware
 //   POST /api/ota         body = firmware file (.bin)   write it to the other slot and reboot into it
-//   GET  /                                      test page (index.html) with sliders, WiFi, VPN and update
+//   GET  /                                      the page (index.html): fans, network, system
 
 #include <stdio.h>
 #include <stdlib.h>

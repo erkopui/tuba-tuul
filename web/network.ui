@@ -1,0 +1,116 @@
+
+%view network #main
+	section.Card
+		h3 WiFi
+		/ The rows have an element of their own: when the last row goes, the
+		/ drawing of what stands after the rows would end there.
+		div
+			.Row
+				;each! "ssid", saved
+				@click "wifiRemove", "button"
+				span.Row-wide ;txt ssid
+				button Remove
+		.Row
+			button ;txt scanning ? "Scanning..." : "Scan"
+				@click "wifiScan"
+			/ Without the `if` the draw that empties the list would fail.
+			select
+				;if found.length
+				@change "wifiPick"
+				option ;txt found.length + " networks, pick one"
+				option
+					;each! "net", found
+					;value net.ssid
+					;txt net.ssid + "  (" + net.rssi + " dBm)"
+		Form
+			@submit "wifiAdd"
+			Plain.Row-wide[name=ssid][placeholder=SSID]
+			input.Row-wide[name=pass][type=password][placeholder=Password]
+			button Add
+		h3 VPN
+		p
+			span WireGuard:
+			b.State ;txt " " + (vpn.state || "?") + "  " + (vpn.tunnel || "")
+				;cls "is-up", vpn.state == "up"
+		Form
+			@submit "vpnSave"
+			textarea[name=conf][rows=8][autocomplete=off][spellcheck=false]
+				;placeholder! "[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/24\n\n[Peer]\nPublicKey = ...\nEndpoint = vpn.example.com:51820"
+			button Save
+			button[type=button] Remove
+				@click "vpnRemove"
+
+%js
+	var saved = $d.saved = []
+	, found = $d.found = []
+	function wifiLoad() {
+		get("wifi", function(wifi, err) {
+			if (!err) fill(saved, wifi.saved)
+			draw()
+		})
+	}
+	// The tunnel switches over a moment after the answer, so look twice.
+	function vpnChanged() {
+		setTimeout(get, 3000, "vpn", draw)
+		setTimeout(get, 10000, "vpn", draw)
+	}
+	// The list back to its first line, where it says nothing of the SSID field.
+	function pickNone() {
+		var el = $("select")
+		if (el) el.selectedIndex = 0
+	}
+	// One request after the other, so the browser needs a single connection
+	// to the board. A scan that got no answer is given up here.
+	$ui.ping("network", function() {
+		$d.scanning = 0
+		get("vpn", function() {
+			draw()
+			wifiLoad()
+		})
+	})
+	$ui.on("wifiRemove", function(e, el) {
+		var ssid = El.scope(el).ssid
+		// The rows are used again for the networks left, so the focus, or a
+		// second click, would be on the Remove of the next one. The focus is
+		// taken away and the name is asked.
+		el.blur()
+		if (confirm("Remove " + ssid + "?")) send("DELETE", "wifi", ssid, wifiLoad)
+	})
+	$ui.on("wifiScan", function() {
+		if ($d.scanning) return
+		$d.scanning = 1
+		draw()
+		get("wifi/scan", function(list, err) {
+			$d.scanning = 0
+			if (!err) fill(found, list)
+			say("GET /api/wifi/scan\n" + (err === 1 ? "the board does not answer" : err ? "scan failed, try again" : list.length + " networks"))
+			pickNone()
+		})
+	})
+	$ui.on("wifiPick", function(e, el) {
+		var form = $("form")
+		if (el.selectedIndex) form.ssid.value = el.value
+		form.pass.focus()
+	})
+	$ui.on("wifiAdd", function(e, el) {
+		var ssid = el.ssid.value
+		, line = "POST /api/wifi  " + ssid
+		// Enter in the SSID field goes on to the password.
+		if (!el.pass.value && document.activeElement == el.ssid) return el.pass.focus()
+		if (!el.pass.value && saved.indexOf(ssid) > -1) {
+			return say(line + "\nnot sent, an empty password would replace the saved one")
+		}
+		send("POST", "wifi", ssid + "\n" + el.pass.value, function(text) {
+			if (text) el.reset(), pickNone()
+			wifiLoad()
+		})
+	})
+	$ui.on("vpnSave", function(e, el) {
+		send("POST", "vpn", el.conf.value, function(text) {
+			if (text) el.reset()
+			vpnChanged()
+		}, "(config)")
+	})
+	$ui.on("vpnRemove", function() {
+		if (confirm("Remove the VPN config?")) send("DELETE", "vpn", "", vpnChanged)
+	})

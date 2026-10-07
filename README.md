@@ -47,7 +47,8 @@ The serial port may also show up as `/dev/ttyUSB0`.
 ## WiFi setup
 
 On first boot the board starts the access point `fan-pwm-setup` (password `fancontrol`).
-Connect to it, open http://192.168.4.1/, enter the home WiFi name and password, press Add.
+Connect to it, open http://192.168.4.1/, go to Network, enter the home WiFi name and password,
+press Add.
 The board joins that network. It is then reachable as http://fans2.local/
 (the IP address is also printed on the serial console).
 
@@ -56,11 +57,11 @@ looks which of them are in range and joins the strongest, about 1 s of looking f
 one. One that does not let it in is left out the next time, so a wrong password does not keep the
 others from being tried. Hidden networks work too. Adding a network
 does not disturb a working connection. A removed network that is in use stays connected until
-that link drops. The test page lists the saved networks by name; the passwords are never given back.
+that link drops. The page lists the saved networks by name; the passwords are never given back.
 
 If no saved network can be reached for 30 s the setup AP comes back until a connection works again.
 
-The name `fans2` can be changed on the test page, or with `/api/name`. The board answers to the
+The name `fans2` can be changed on the System view of the page, or with `/api/name`. The board answers to the
 new name at once and keeps it over reboots. Give each board on a network its own name.
 
 Status LED (GPIO 48): short flash every 2 s = connected, slow blink = connecting, fast blink = setup AP is up.
@@ -87,9 +88,16 @@ that time for one request, 0 to 40000. The API always reports the target speed.
 
 The POST requests answer with the new speed list.
 
-http://fans2.local/ is a test page: a slider and 0/50/100 buttons per fan, an "All" row, a field for
-the fade time, a log line with the last request and the answer of the device, the WiFi and
-VPN settings and the firmware update.
+http://fans2.local/ is the page of the board, with three views under a menu:
+
+- Fans: a slider and 0/50/100 buttons per fan, an "All" row, a field for the fade time.
+- Network: the saved WiFi networks, the scan, and the VPN config.
+- System: the name of the board and the firmware update.
+
+Below every view is a Refresh button, which reads the view again from the board, and a log line
+with the last request and the answer of the board. The page is
+light or dark as the system of the viewer is set, and on a narrow screen each fan slider gets a
+line of its own. How the page is made is under [Web page](#web-page).
 
 There is no authentication, keep the device on a trusted network.
 
@@ -102,7 +110,7 @@ ramp time. REST and Modbus show the same speeds.
 ## VPN (WireGuard)
 
 Optional. With a WireGuard config stored, the board keeps a tunnel open to one WireGuard server.
-The test page, the REST API and Modbus can then be reached through that server from anywhere,
+The page, the REST API and Modbus can then be reached through that server from anywhere,
 at the board's tunnel address.
 
 On the WireGuard server add the board as a client, the same way as a phone or a laptop, and take
@@ -116,7 +124,7 @@ the client config it gives:
     PublicKey = ...
     Endpoint = vpn.example.com:51820
 
-Paste it into the VPN box of the test page, or send the file:
+Paste it into the VPN box on the Network view of the page, or send the file:
 
     curl --data-binary @fans.conf http://fans2.local/api/vpn   # store (-d would drop the line ends)
     curl http://fans2.local/api/vpn              # {"state":"up","tunnel":"10.0.0.2/24 via vpn.example.com:51820"}
@@ -155,8 +163,8 @@ and `DNS` too.
 
 ## Firmware update
 
-A new firmware can be sent over WiFi, or through the VPN. On the test page pick
-`build/fan-pwm.bin` under "Board" and press Update, or send the file:
+A new firmware can be sent over WiFi, or through the VPN. On the System view of the page pick
+`build/fan-pwm.bin` and press Update, or send the file:
 
     curl --data-binary @build/fan-pwm.bin http://fans2.local/api/ota   # write it and reboot into it
     curl http://fans2.local/api/ota      # {"version":"68db7ba","board":"fans8","slot":"ota_0"}
@@ -175,7 +183,7 @@ A file is refused, before anything is written, unless it is
 A damaged or incomplete file is refused at the end of the upload.
 
 After the reboot the new firmware runs on trial. The first connection to its web server confirms
-it: the test page, which asks by itself, or any API request. Modbus does not count. When it is not
+it: the page, which asks by itself, or any API request. Modbus does not count. When it is not
 confirmed within 5 minutes (`OTA_CONFIRM_MIN`), or it crashes or is reset before, the board goes
 back to the previous firmware. So a firmware that cannot be reached replaces itself with the one
 that could.
@@ -194,6 +202,44 @@ right one.
   settings stay.
 - Flashing over USB always writes the first slot and makes it the one to start.
 
+## Web page
+
+The page is built with [LiteJS](https://github.com/litejs/ui). Its source is in `web/`:
+
+| File                      | What                                              |
+|---------------------------|---------------------------------------------------|
+| `dev.html`                | the list of the files below, in the order they load |
+| `app.js`                  | start of the page, helpers the views share        |
+| `main.ui`                 | styles, the menu, Refresh, the log line           |
+| `fans.ui`, `network.ui`, `system.ui` | one view each: its template and its handlers |
+
+The firmware holds one file, `main/index.html`, which is built from these and is kept in git, so
+the firmware build itself needs no Node.js. After a change in `web/` build it again (this needs
+Node.js), then build the firmware:
+
+    cd web
+    npm install        # once
+    npm run build      # writes ../main/index.html
+
+The build joins the LiteJS engine, the helpers and the views into that one file of about 25 kB, so
+the page needs nothing from the internet and works on the setup AP too. Note that the build tool
+also runs `git add -u`, which stages every changed file that git already tracks.
+
+A view file holds a template and, under `%js`, the handlers of that view. Things to know:
+
+- Nothing is drawn again by itself. A handler changes the data in `$d` and calls `draw()`.
+- A list is shown with `;each!` (with the `!`) and has to stay the same array: fill it with
+  `fill()`, do not assign a new one. Its rows are kept and get the new items by position. A list
+  that can get empty and has something after it needs an element of its own around its rows.
+- A binding on the line of the row itself must not read a field of the item, the draw that empties
+  the list would fail: put it on an element inside the row, or give the element around the rows
+  `;if list.length`.
+- In the built page the top-level names of all `%js` blocks are globals, and a template that
+  reads a name of the same spelling gets the global there, but `$d.<name>` in `dev.html`. Such a
+  name has to be the very object that `$d` holds under it, as in `var rows = $d.rows = []`; give
+  every other name a spelling that no template reads.
+- No empty line inside a `%js` or `%css` block, the build takes one as the end of the block.
+
 ## Source
 
 | File            | What                                   |
@@ -206,7 +252,7 @@ right one.
 | `main/vpn.c`    | WireGuard tunnel (esp_wireguard)       |
 | `main/ota.c`    | firmware update over the air           |
 | `partitions.csv` | flash layout with two firmware slots  |
-| `main/index.html` | test page served at `/`              |
+| `main/index.html` | the page served at `/`, built from `web/` |
 | `main/wifi.c`   | WiFi station + setup AP, mDNS          |
 | `main/led.c`    | status LED                             |
 | `main/mtimer.c` | millisecond timeouts                   |

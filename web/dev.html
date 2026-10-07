@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fans</title>
+<!-- An empty icon saves the board the request for one. -->
+<link rel="icon" href="data:,">
+</head>
+<body>
+<!--
+The source of the page. `npm run build` joins all of it into the one file
+main/index.html, which the firmware holds.
+
+A new view is a new .ui file and a line here, before the start.
+-->
+<script src="node_modules/@litejs/ui/load.js" min inline drop="debug ie9 log"></script>
+<!-- A browser with site data blocked refuses localStorage, and the engine would stop there. The page needs none. -->
+<script min>try{localStorage}catch(e){Object.defineProperty(window,"localStorage",{value:{}})}</script>
+<script src="node_modules/@litejs/ui/ui.js" min drop="i18n kb markup svg touch"></script>
+<script src="app.js" min></script>
+<script src="main.ui" type="ui" min></script>
+<script src="fans.ui" type="ui" min></script>
+<script src="network.ui" type="ui" min></script>
+<script src="system.ui" type="ui" min></script>
+<script min>LiteJS.start($ui.show)</script>
+</body>
+</html>
